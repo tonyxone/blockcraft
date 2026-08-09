@@ -1,0 +1,3 @@
+// Application icon (Explorer, taskbar, alt-tab). Regenerate the .ico with
+// tools\gen_icon.ps1.
+101 ICON "blockcraft.ico"

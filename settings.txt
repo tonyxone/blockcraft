@@ -1,0 +1,6 @@
+sensitivity 1
+renderDistance 4
+resolution 2560 1440
+thirdPerson 0
+displayMode 1
+character 0

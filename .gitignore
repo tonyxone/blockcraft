@@ -1,0 +1,10 @@
+# Build artifacts
+build/
+blockcraft.exe
+
+# Tool-local / transient files
+.claude/
+tmp.ppm
+build_log.txt
+selftest_result.txt
+watertest_result.txt
