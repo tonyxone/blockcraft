@@ -35,6 +35,7 @@
 #include "recipes.h"
 #include "tools.h"
 #include "minimap.h"
+#include "worldmap.h"
 
 static const int MESH_BUDGET_PER_FRAME = 12;
 // Reach is measured from the EYE along the view ray, and MINING and BUILDING
@@ -115,6 +116,7 @@ static double g_camModelview[16], g_camProjection[16];
 static int g_camViewport[4];
 static bool g_invOpen = false; // inventory screen overlay (I key)
 static bool g_chestOpen = false; // chest screen overlay (E key on a chest)
+static bool g_fullMapOpen = false; // whole-world map overlay (M key)
 static int g_chestX = 0, g_chestY = 0, g_chestZ = 0; // which chest is showing
 static uint32_t g_currentSeed = 1337; // this session's terrain seed
 static Menu g_menu;
@@ -216,6 +218,7 @@ static void createSession(const SaveState* save) {
   g_boats.clear(); // boats don't survive a reload either
   g_playerBoatIndex = -1;
   g_boatRowPhase = 0;
+  worldMapReset(); // a new/loaded world has nothing to do with the last one's exploration
 
   // every new game gets a fresh random map; loads restore their saved seed
   g_currentSeed = save ? save->seed : randomSeed();
@@ -263,6 +266,7 @@ static void createSession(const SaveState* save) {
   g_inventory->characterType = g_settings.characterType;
   g_invOpen = false;
   g_chestOpen = false;
+  g_fullMapOpen = false;
 }
 
 static void beginPlaying() {
@@ -284,6 +288,17 @@ static void closeInventory() {
   g_inventory->stowHeld(*g_hotbar); // a stack on the cursor goes back first
   g_inventory->contextMenuSlot = nullptr; // don't reopen stale on the next visit
   g_invOpen = false;
+  setCursorCaptured(true);
+}
+
+static void openFullMap() {
+  g_fullMapOpen = true;
+  clearKeys(); // release any held movement keys so the player stops
+  setCursorCaptured(false); // free the mouse for placing/removing markers
+}
+
+static void closeFullMap() {
+  g_fullMapOpen = false;
   setCursorCaptured(true);
 }
 
@@ -1660,13 +1675,13 @@ static void render() {
     drawRect(0, 0, g_winW, g_winH, g_waterView.r, g_waterView.g, g_waterView.b,
              g_waterView.tintAlpha);
   }
-  if (g_world && g_hotbar && !g_invOpen && !g_chestOpen) g_hotbar->draw(g_winW, g_winH);
-  if (g_state == GameState::Playing && !g_invOpen && !g_chestOpen) {
+  if (g_world && g_hotbar && !g_invOpen && !g_chestOpen && !g_fullMapOpen) g_hotbar->draw(g_winW, g_winH);
+  if (g_state == GameState::Playing && !g_invOpen && !g_chestOpen && !g_fullMapOpen) {
     drawHealthHunger();
     drawDamagePopups();
     drawCrosshair();
     drawInteractPrompt();
-    drawMinimap(g_winW, g_winH, g_player ? g_player->yaw : 0.0);
+    drawMinimap(g_winW, g_winH, g_player ? g_player->yaw : 0.0, g_boats);
     if (g_hudMsgTimer > 0 && !g_hudMsg.empty()) {
       double tw = textWidth(g_fontMsg, g_hudMsg.c_str());
       double tx = (g_winW - tw) / 2;
@@ -1695,6 +1710,9 @@ static void render() {
   if (g_chestOpen && g_inventory && g_world) {
     g_inventory->drawChestContents(g_world->chests[{ g_chestX, g_chestY, g_chestZ }], *g_hotbar,
                                    g_winW, g_winH, g_mouseX, g_mouseY);
+  }
+  if (g_fullMapOpen && g_player) {
+    drawFullMap(g_winW, g_winH, g_player->position, g_player->yaw, g_boats);
   }
   if (g_state != GameState::Playing) {
     drawRect(0, 0, g_winW, g_winH, 0, 0, 0, 1.0); // opaque menu backdrop
@@ -1757,6 +1775,9 @@ static void updateFrame(double dt) {
 
     auto removed = g_world->updateLoadedChunks(g_player->position.x, g_player->position.z);
     for (auto& chunk : removed) disposeChunk(*chunk);
+    // Explored state must be fresh before the corner map samples it below,
+    // since minimapUpdate now paints unexplored cells as fog too.
+    worldMapUpdate(*g_world, g_player->position.x, g_player->position.z);
     minimapUpdate(*g_world, g_player->position.x, g_player->position.z);
 
     for (Animal& a : g_animals) updateAnimal(a, *g_world, dt);
@@ -1860,7 +1881,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
 
     case WM_KEYDOWN: {
       if (wParam < 256) g_keys[wParam] = true;
-      if (g_state == GameState::Playing && g_hotbar && !g_invOpen) {
+      if (g_state == GameState::Playing && g_hotbar && !g_invOpen && !g_fullMapOpen) {
         if (wParam >= '1' && wParam <= '9') g_hotbar->select((int)(wParam - '1'));
         else if (wParam == '0') g_hotbar->select(9); // 0 key = the tenth slot
       }
@@ -1869,13 +1890,20 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         g_settings.thirdPerson = g_thirdPerson; // remembered across sessions
         saveSettings(g_settings);
       }
-      if (g_state == GameState::Playing && wParam == 'I' && !(lParam & 0x40000000) && !g_chestOpen) {
+      if (g_state == GameState::Playing && wParam == 'M' && !(lParam & 0x40000000) && !g_invOpen &&
+          !g_chestOpen) {
+        if (g_fullMapOpen) closeFullMap();
+        else openFullMap();
+      }
+      if (g_state == GameState::Playing && wParam == 'I' && !(lParam & 0x40000000) && !g_chestOpen &&
+          !g_fullMapOpen) {
         if (g_invOpen) closeInventory();
         else openInventory();
       }
       // Fast path to the recipe book: straight to the Craft tab with it
       // already open, same toggle shape as 'I'.
-      if (g_state == GameState::Playing && wParam == 'R' && !(lParam & 0x40000000) && !g_chestOpen) {
+      if (g_state == GameState::Playing && wParam == 'R' && !(lParam & 0x40000000) && !g_chestOpen &&
+          !g_fullMapOpen) {
         // Cooking takes priority: if you're at a lit heat source with raw
         // meat selected, R cooks instead of touching the recipe book at all
         // — the same context-sensitive-key idea E already uses across
@@ -1890,7 +1918,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
           g_inventory->bookOpen = true;
         }
       }
-      if (g_state == GameState::Playing && wParam == 'E' && !(lParam & 0x40000000)) {
+      if (g_state == GameState::Playing && wParam == 'E' && !(lParam & 0x40000000) && !g_fullMapOpen) {
         if (g_playerBoatIndex >= 0) {
           tryEnterOrExitBoat(); // always exits, regardless of anything else nearby
         } else if (g_chestOpen) {
@@ -1922,6 +1950,8 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
           closeInventory();
         } else if (g_chestOpen) {
           closeChest();
+        } else if (g_fullMapOpen) {
+          closeFullMap();
         } else if (g_state == GameState::Playing) {
           pauseGame();
         } else if (g_menu.isSubPanel()) {
@@ -1950,7 +1980,11 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
 
     case WM_LBUTTONDOWN:
       if (g_state == GameState::Playing) {
-        if (g_invOpen && g_inventory && g_inventory->characterSwitchButtonHit(g_mouseX, g_mouseY, g_winW, g_winH)) {
+        if (g_fullMapOpen && g_player) {
+          double wx, wz;
+          if (fullMapScreenToWorld(g_mouseX, g_mouseY, g_winW, g_winH, g_player->position, wx, wz))
+            addMapMarker(wx, wz);
+        } else if (g_invOpen && g_inventory && g_inventory->characterSwitchButtonHit(g_mouseX, g_mouseY, g_winW, g_winH)) {
           applyCharacterType(1 - g_settings.characterType);
         } else if (g_invOpen) {
           g_inventory->onMouseDown(*g_hotbar, g_mouseX, g_mouseY, false, g_winW, g_winH);
@@ -1982,7 +2016,11 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
 
     case WM_RBUTTONDOWN:
       if (g_state == GameState::Playing) {
-        if (g_invOpen) {
+        if (g_fullMapOpen && g_player) {
+          double wx, wz;
+          if (fullMapScreenToWorld(g_mouseX, g_mouseY, g_winW, g_winH, g_player->position, wx, wz))
+            removeNearestMapMarker(wx, wz);
+        } else if (g_invOpen) {
           g_inventory->onMouseDown(*g_hotbar, g_mouseX, g_mouseY, true, g_winW, g_winH);
           applyPendingEat();
           applyPendingDrop();
@@ -2002,6 +2040,15 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
       if (g_state == GameState::Playing && g_chestOpen && g_inventory) {
         g_inventory->chestMouseUp(g_world->chests[{ g_chestX, g_chestY, g_chestZ }], *g_hotbar,
                                   g_mouseX, g_mouseY, true, g_winW, g_winH);
+      }
+      return 0;
+
+    case WM_MOUSEWHEEL:
+      if (g_state == GameState::Playing && g_fullMapOpen) {
+        // (short)HIWORD(wParam) is the wheel delta — windowsx.h's
+        // GET_WHEEL_DELTA_WPARAM macro without pulling in the header.
+        int notches = (short)HIWORD(wParam) / WHEEL_DELTA;
+        worldMapAdjustZoom(notches);
       }
       return 0;
 
@@ -4898,6 +4945,71 @@ static int runSelftest() {
     check(ok, "minimap_arrow_north_up");
   }
 
+  // Map colours must actually match their block: this used to sample the
+  // wrong tile (a stride bug — see minimap.cpp's buildPalette), so grass
+  // came out desaturated and unrelated blocks could share a colour.
+  {
+    int sr, sg, sb, wr, wg, wb, gr, gg, gb;
+    minimapBlockColor(BLOCK_STONE, sr, sg, sb);
+    minimapBlockColor(BLOCK_WATER, wr, wg, wb);
+    minimapBlockColor(BLOCK_GRASS, gr, gg, gb);
+    // Stone reads as gray: no channel far from the average of the three.
+    int savg = (sr + sg + sb) / 3;
+    bool stoneGray = std::abs(sr - savg) < 20 && std::abs(sg - savg) < 20 && std::abs(sb - savg) < 20;
+    // Water reads as blue: blue is the strongest channel, clearly so.
+    bool waterBlue = wb > wr + 15 && wb > wg + 5;
+    // Grass reads as green: green is the strongest channel.
+    bool grassGreen = gg > gr && gg > gb;
+    check(stoneGray, "map_color_stone_is_gray");
+    check(waterBlue, "map_color_water_is_blue");
+    check(grassGreen, "map_color_grass_is_green");
+    if (!stoneGray) std::fprintf(f, "  (stone rgb=%d,%d,%d)\n", sr, sg, sb);
+    if (!waterBlue) std::fprintf(f, "  (water rgb=%d,%d,%d)\n", wr, wg, wb);
+    if (!grassGreen) std::fprintf(f, "  (grass rgb=%d,%d,%d)\n", gr, gg, gb);
+  }
+
+  // Whole-world map: exploring loads chunks near the player and records
+  // columns within REVEAL_RADIUS of the player permanently, leaving
+  // everywhere else — including columns whose chunk is merely loaded but
+  // the player hasn't actually walked near — as unexplored mist, and stays
+  // that way even after the chunk that recorded a column unloads again.
+  // Its own fresh World, same reason as the fish/boat tests above:
+  // reloading a shared World's chunk window at a distant column would
+  // silently invalidate whatever earlier tests still depend on being there.
+  {
+    World mapWorld;
+    mapWorld.updateLoadedChunks(0, 0);
+    worldMapUpdate(mapWorld, 0, 0);
+    bool nearExplored = worldMapExplored(0, 0) && worldMapExplored(10, -10);
+    bool outsideRevealRadiusStaysMist = !worldMapExplored(40, 40); // loaded chunk, but far from (0,0)
+    bool farUnexplored = !worldMapExplored(-WORLD_RADIUS + 4, WORLD_RADIUS - 4);
+    check(nearExplored, "world_map_explores_near_player");
+    check(outsideRevealRadiusStaysMist, "world_map_reveal_radius_is_tight");
+    check(farUnexplored, "world_map_unexplored_stays_mist");
+
+    // Now move far away: the near chunks unload, but they were already
+    // recorded, so they must still read as explored.
+    mapWorld.updateLoadedChunks(400, 400);
+    worldMapUpdate(mapWorld, 400, 400);
+    check(worldMapExplored(0, 0), "world_map_exploration_is_permanent");
+  }
+
+  // Map markers: placed by left-click on the full map (see
+  // fullMapScreenToWorld in worldmap.cpp), shown on both the full map and
+  // the corner minimap, removable with a right-click near one.
+  {
+    size_t before = mapMarkers().size();
+    addMapMarker(10, 20);
+    addMapMarker(-50, 5);
+    bool added = mapMarkers().size() == before + 2;
+    removeNearestMapMarker(11, 19); // closer to (10,20) than to (-50,5)
+    bool removedNearest = mapMarkers().size() == before + 1 &&
+                          std::abs(mapMarkers().back().x - (-50)) < 0.01;
+    check(added, "map_marker_add");
+    check(removedNearest, "map_marker_remove_nearest");
+    removeNearestMapMarker(-50, 5);
+  }
+
   // clouds: a broken layer (neither empty sky nor solid overcast), wrapping
   // seamlessly so the drifting tiles line up
   {
@@ -5059,6 +5171,7 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR lpCmdLine, int) {
   playerModelInit();
   skyInit();
   minimapInit();
+  worldMapInit();
   migrateLegacySave();
   g_menu.sensitivity = g_settings.sensitivity;
   g_menu.renderDistance = g_settings.renderDistance;
