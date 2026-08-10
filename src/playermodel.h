@@ -19,6 +19,15 @@ struct PlayerAnim {
   double swing = 0;      // 0..1 progress of the collect/build arm swing
   bool swingLeft = false; // which arm swings: right collects, left builds
   int heldTool = -1;     // CraftItem id gripped in the right hand, or -1 for none
+
+  // Riding a boat (boat.h): overrides the walk/air/swing pose above
+  // entirely — both legs bend forward at the hip (sitting; there's no knee
+  // joint to bend instead, same single-box-limb simplification the walk
+  // cycle already makes) and both hands grip a paddle instead of whatever
+  // heldTool/swing would otherwise show. rowPhase advances while actually
+  // rowing (the boat's own forward/back input), frozen while just sitting.
+  bool boating = false;
+  double rowPhase = 0;
 };
 
 // Draws the character at the player's position, facing the player's yaw.

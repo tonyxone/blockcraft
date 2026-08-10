@@ -75,6 +75,7 @@ enum Tile : int {
   TILE_CAMPFIRE,
   TILE_RAW_MEAT,
   TILE_COOKED_MEAT,
+  TILE_BOAT,
 
   // World textures for the crafted goods that can be placed. Separate from
   // the slot icons above: an icon is a small shape on a transparent field,

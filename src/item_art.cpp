@@ -454,6 +454,27 @@ const char* const BED_ROWS[TILE_PX] = {
   "................",
 };
 
+// Seen from above (Desktop\animal\Oak_Boat_JE4_BE2.png): a hull pointed at
+// both bow and stern, hollow inside with a plank seat crossing the middle.
+const char* const BOAT_ROWS[TILE_PX] = {
+  "................",
+  ".......MM.......",
+  "......MMMM......",
+  ".....MDDDDM.....",
+  "....MDDDDDDM....",
+  "...MDDDDDDDDM...",
+  "...MDDDDDDDDM...",
+  "...MRRRRRRRRM...",
+  "...MRRRRRRRRM...",
+  "...MDDDDDDDDM...",
+  "....MDDDDDDM....",
+  ".....MDDDDM.....",
+  "......MMMM......",
+  ".......MM.......",
+  "................",
+  "................",
+};
+
 // A crossed pile of logs with a flame licking up from the middle.
 const char* const CAMPFIRE_ROWS[TILE_PX] = {
   "................",
@@ -697,6 +718,9 @@ const ItemArt ART_COOKED_MEAT = {
                     { 'D', MEAT_COOK_DK, MEAT_COOK_DK_D }, { 'B', BONE, BONE_D },
                     { 'W', BONE_HI, BONE_HI_D } }
 };
+const ItemArt ART_BOAT = {
+  BOAT_ROWS, { { 'M', WOOD, WOOD_D }, { 'D', DARKWOOD, DARKWOOD_D }, { 'R', WOOD, WOOD_D } }
+};
 
 // World textures for the placed blocks.
 const ItemArt BLK_PLANKS = { BLK_PLANKS_ROWS, { { 'M', WOOD, WOOD_D }, { 'D', DARKWOOD, DARKWOOD_D } } };
@@ -771,6 +795,7 @@ const ItemArt* itemArtForTile(int tile) {
     case TILE_CAMPFIRE: return &ART_CAMPFIRE;
     case TILE_RAW_MEAT: return &ART_RAW_MEAT;
     case TILE_COOKED_MEAT: return &ART_COOKED_MEAT;
+    case TILE_BOAT: return &ART_BOAT;
     case TILE_WOOD_PICKAXE: return &ART_WOOD_PICKAXE;
     case TILE_STONE_PICKAXE: return &ART_STONE_PICKAXE;
     case TILE_WOOD_AXE: return &ART_WOOD_AXE;

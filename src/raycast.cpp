@@ -78,3 +78,15 @@ static bool raycastClassify(World& world, const Vec3& origin, const Vec3& direct
 bool raycastVoxel(World& world, const Vec3& origin, const Vec3& direction, double maxDistance, RaycastHit& out) {
   return raycastClassify(world, origin, direction, maxDistance, classifySolid, out);
 }
+
+static RayCell classifyWater(uint8_t id) {
+  if (isWater(id)) return RAY_HIT;
+  // A solid wall (or a panel, same as classifySolid) stops the march rather
+  // than passing through — you cannot aim a boat placement through a wall
+  // at water on the far side of it.
+  return (isSolid(id) || isPanel(id)) ? RAY_BLOCK : RAY_PASS;
+}
+
+bool raycastWater(World& world, const Vec3& origin, const Vec3& direction, double maxDistance, RaycastHit& out) {
+  return raycastClassify(world, origin, direction, maxDistance, classifyWater, out);
+}

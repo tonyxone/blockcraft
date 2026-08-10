@@ -28,7 +28,9 @@
 #include "sound.h"
 #include "playermodel.h"
 #include "animal.h"
+#include "boat.h"
 #include "droppeditem.h"
+#include "fish.h"
 #include "sky.h"
 #include "recipes.h"
 #include "tools.h"
@@ -87,6 +89,11 @@ static std::unique_ptr<Inventory> g_inventory;
 static std::vector<Animal> g_animals;
 static double g_animalSpawnTimer = 0; // seconds since the last spawn maintenance pass
 static std::vector<DroppedItem> g_droppedItems;
+static std::vector<Fish> g_fishes;
+static double g_fishSpawnTimer = 0; // seconds since the last fish spawn maintenance pass
+static std::vector<Boat> g_boats;
+static int g_playerBoatIndex = -1; // index into g_boats while driving, -1 when on foot
+static double g_boatRowPhase = 0;  // advances while actively rowing; drives paddle animation
 
 // A floating "-1.5" that pops up over an animal's head on a hit and fades
 // after half a second. World-space position, but drawn as flat 2D HUD text
@@ -204,6 +211,11 @@ static void createSession(const SaveState* save) {
   g_animalSpawnTimer = 0;
   g_damagePopups.clear();
   g_droppedItems.clear(); // dropped items don't survive a reload either
+  g_fishes.clear();
+  g_fishSpawnTimer = 0;
+  g_boats.clear(); // boats don't survive a reload either
+  g_playerBoatIndex = -1;
+  g_boatRowPhase = 0;
 
   // every new game gets a fresh random map; loads restore their saved seed
   g_currentSeed = save ? save->seed : randomSeed();
@@ -505,6 +517,27 @@ static bool tryEatSelected() {
   return true;
 }
 
+// Placing a boat is nothing like placing a block: no cell in the world
+// grid, no footprint, just a free-floating Boat (boat.h) spawned right on
+// the water's own surface. Checked ahead of tryPlace()'s normal build
+// logic, and using its own raycastWater rather than the solid-block
+// targetedBlock() every other placement reads, since a boat can only ever
+// go on open water — never on land.
+static bool tryPlaceBoat() {
+  if (!g_world || !g_player || !g_hotbar || g_hotbar->selectedBlockId() != ITEM_BOAT) return false;
+  RaycastHit hit;
+  if (!raycastWater(*g_world, g_player->eyePosition(), lookDirection(), PLACE_REACH, hit)) return false;
+  double surfaceY;
+  if (!canPlaceBoatAt(*g_world, hit.pos[0], hit.pos[2], g_boats, surfaceY)) return false;
+  Boat boat;
+  boat.position = Vec3(hit.pos[0] + 0.5, surfaceY, hit.pos[2] + 0.5);
+  boat.yaw = g_player->yaw;
+  g_boats.push_back(boat);
+  g_hotbar->takeSelected();
+  playPlaceSound();
+  return true;
+}
+
 // Tosses an item out in front of the player — a short forward-and-up arc,
 // same idea as Minecraft's own Q-drop — and lets updateDroppedItem's gravity
 // settle it onto whatever's below, floor or table alike.
@@ -601,6 +634,24 @@ static void trySleep() {
   g_player->health = g_player->maxHealth;
   g_player->hungerBoostTimer = SLEEP_HUNGER_BOOST_DURATION;
   playSleepSound();
+}
+
+// Enter/exit a boat (E key). Entering just claims it (occupied=true, the
+// per-frame driving update takes over from there); exiting drops the player
+// back onto foot-controls exactly where the boat was — normally that's the
+// water surface, so stepping out onto open water and starting to sink is
+// expected, the same as stepping off a dock.
+static void tryEnterOrExitBoat() {
+  if (!g_player) return;
+  if (g_playerBoatIndex >= 0) {
+    if (g_playerBoatIndex < (int)g_boats.size()) g_boats[g_playerBoatIndex].occupied = false;
+    g_playerBoatIndex = -1;
+    return;
+  }
+  int i = nearestBoat(g_boats, g_player->position);
+  if (i < 0) return;
+  g_boats[(size_t)i].occupied = true;
+  g_playerBoatIndex = i;
 }
 
 static void remeshAll(const std::vector<Chunk*>& chunks) {
@@ -826,6 +877,7 @@ static bool placementOverlapsPlayer(int px, int py, int pz) {
 static void tryPlace() {
   if (!g_world || !g_player) return;
   if (tryEatSelected()) return;
+  if (tryPlaceBoat()) return;
   g_armSwingTimer = ARM_SWING_TIME;
   g_swingLeftHand = true; // building is the left hand
   RaycastHit hit;
@@ -1211,14 +1263,19 @@ static void drawCrosshair() {
 static void drawInteractPrompt() {
   if (!g_world || !g_player) return;
 
-  // A nearby dropped item or bed takes priority — proximity, not a raycast,
-  // so either shows up whether or not the player happens to be LOOKING at
-  // it too.
+  // Already driving takes priority over everything — E always exits.
+  // Otherwise a nearby dropped item, bed or boat wins over the raycast
+  // fallback below — proximity, not aim, so any of them shows up whether or
+  // not the player happens to be LOOKING at it too.
   const char* label = nullptr;
-  if (nearestDroppedItem() >= 0) {
+  if (g_playerBoatIndex >= 0) {
+    label = "Press E to exit boat";
+  } else if (nearestDroppedItem() >= 0) {
     label = "Press E to pick up";
   } else if (nearBed()) {
     label = "Press E to sleep";
+  } else if (nearestBoat(g_boats, g_player->position) >= 0) {
+    label = "Press E to enter boat";
   } else {
     RaycastHit hit;
     if (targetedBlock(hit, MINE_REACH)) {
@@ -1473,6 +1530,8 @@ static void render() {
       anim.swing = g_armSwingTimer > 0 ? 1.0 - g_armSwingTimer / ARM_SWING_TIME : 0.0;
       anim.swingLeft = g_swingLeftHand;
       anim.heldTool = g_inventory ? g_inventory->mainHand.blockId : -1;
+      anim.boating = g_playerBoatIndex >= 0;
+      anim.rowPhase = g_boatRowPhase;
       drawPlayerModel(*g_player, anim);
       glBindTexture(GL_TEXTURE_2D, atlasTextureId()); // restore for water
     }
@@ -1481,6 +1540,8 @@ static void render() {
     // unlike drawPlayerModel above, not gated on third-person view).
     drawAnimals(g_animals);
     drawDroppedItems(g_droppedItems, g_elapsedTime);
+    drawFishes(g_fishes);
+    drawBoats(g_boats);
 
     // water: transparent, no depth write (matches the JS material).
     // Culling is off so the surface is still there when seen from below —
@@ -1667,8 +1728,21 @@ static void updateFrame(double dt) {
       g_lookDX = 0;
       g_lookDY = 0;
 
-      g_player->update(dt, *g_world, getMoveInput());
-      checkTrapdoorTrigger(dt);
+      if (g_playerBoatIndex >= 0 && g_playerBoatIndex < (int)g_boats.size()) {
+        // Driving: steering is "look where you want to go" (mouse, already
+        // applied to g_player->yaw above) — W/S push the boat forward/back
+        // along that facing, A/D are unused (a boat doesn't strafe). Normal
+        // on-foot physics/gravity/trapdoor-triggering are skipped entirely
+        // while riding; the player's own position just tracks the boat's.
+        MoveInput input = getMoveInput();
+        updateBoat(g_boats[g_playerBoatIndex], *g_world, dt, g_player->yaw, input.forward);
+        g_player->position = g_boats[g_playerBoatIndex].position;
+        g_player->velocity = Vec3(0, 0, 0);
+        if (input.forward != 0) g_boatRowPhase += dt * 6.0;
+      } else {
+        g_player->update(dt, *g_world, getMoveInput());
+        checkTrapdoorTrigger(dt);
+      }
     }
 
     // limb animation: gait advances with actual ground movement; the cycle
@@ -1725,6 +1799,23 @@ static void updateFrame(double dt) {
       g_animalSpawnTimer = 0;
       maintainAnimalSpawns(*g_world, g_animals, g_player->position.x, g_player->position.z,
                           g_world->renderDistance);
+    }
+
+    for (Fish& f : g_fishes) updateFish(f, *g_world, dt, g_player->position);
+    g_fishSpawnTimer += dt;
+    const double FISH_SPAWN_INTERVAL = 3.0;
+    if (g_fishSpawnTimer >= FISH_SPAWN_INTERVAL) {
+      g_fishSpawnTimer = 0;
+      maintainFishSpawns(*g_world, g_fishes, g_player->position.x, g_player->position.z,
+                        g_world->renderDistance);
+    }
+
+    // Keeps every boat resting on the water's own surface even when nobody's
+    // riding it — the ridden one (if any) already got a driving update above,
+    // with live input, while the cursor was captured.
+    for (size_t i = 0; i < g_boats.size(); i++) {
+      if ((int)i == g_playerBoatIndex) continue;
+      updateBoat(g_boats[i], *g_world, dt, g_boats[i].yaw, 0);
     }
 
     int budget = MESH_BUDGET_PER_FRAME;
@@ -1800,12 +1891,16 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         }
       }
       if (g_state == GameState::Playing && wParam == 'E' && !(lParam & 0x40000000)) {
-        if (g_chestOpen) {
+        if (g_playerBoatIndex >= 0) {
+          tryEnterOrExitBoat(); // always exits, regardless of anything else nearby
+        } else if (g_chestOpen) {
           closeChest();
         } else if (!g_invOpen && nearestDroppedItem() >= 0) {
           tryPickUpItem();
         } else if (!g_invOpen && nearBed()) {
           trySleep();
+        } else if (!g_invOpen && nearestBoat(g_boats, g_player->position) >= 0) {
+          tryEnterOrExitBoat(); // enters
         } else if (!g_invOpen) {
           RaycastHit hit;
           if (targetedBlock(hit, MINE_REACH)) {
@@ -3194,6 +3289,22 @@ static int runSelftest() {
   check(boxCollides(w, 0.5, (double)topY, 0.5, PLAYER_HALF_WIDTH, PLAYER_HEIGHT), "collide_ground");
   check(!boxCollides(w, 0.5, topY + 1.05, 0.5, PLAYER_HALF_WIDTH, PLAYER_HEIGHT), "clear_above_ground");
 
+  // An unloaded chunk acts as a solid wall, same as the world border —
+  // World::getBlock silently reports it as air, so without this an animal
+  // (or anything else using gravity) wandering to the edge of the loaded
+  // area could fall straight through into an undefined void and sink
+  // forever, vanishing with no death sequence at all.
+  {
+    World fresh; // nothing loaded anywhere in it yet
+    bool blockedInVoid = boxCollides(fresh, 0.5, 40.0, 0.5, PLAYER_HALF_WIDTH, PLAYER_HEIGHT);
+    fresh.updateLoadedChunks(0, 0);
+    bool clearOnceLoaded = !boxCollides(fresh, 0.5, 40.0, 0.5, PLAYER_HALF_WIDTH, PLAYER_HEIGHT);
+    check(blockedInVoid && clearOnceLoaded, "unloaded_chunk_blocks_like_a_wall");
+    if (!(blockedInVoid && clearOnceLoaded)) {
+      std::fprintf(f, "  (blockedInVoid=%d clearOnceLoaded=%d)\n", blockedInVoid, clearOnceLoaded);
+    }
+  }
+
   // Sleeping's hunger boost (Player::hungerBoostTimer, set by main.cpp's
   // trySleep): hunger normally drains once every 30s of play, drains twice
   // as fast (every 15s) while the boost is running, and the boost itself
@@ -3666,6 +3777,142 @@ static int runSelftest() {
     }
     check(seen[0] && seen[1] && seen[2] && seen[3], "biomes_present");
     check(polarOcean, "polar_ocean_present");
+  }
+
+  // Fish: spawn a real variety of kinds and sizes over many rounds, and a
+  // fish placed swimming in open water never wanders out of it. Uses its
+  // own fresh World (not the shared `w` above) — moving `w`'s loaded-chunk
+  // window to a distant test column would silently invalidate every edit
+  // later tests still depend on being there.
+  {
+    World fw;
+    int waterX = 0, waterZ = 0, waterSurfaceY = 0;
+    bool foundWater = false;
+    for (int x = -WORLD_RADIUS + 8; x < WORLD_RADIUS && !foundWater; x += 16) {
+      for (int z = -WORLD_RADIUS + 8; z < WORLD_RADIUS && !foundWater; z += 16) {
+        int b, sy;
+        columnInfoAt(x, z, b, sy);
+        if (sy <= SEA_LEVEL - 4) { waterX = x; waterZ = z; waterSurfaceY = sy; foundWater = true; }
+      }
+    }
+    fw.updateLoadedChunks(waterX, waterZ);
+
+    std::vector<Fish> fishes;
+    int speciesSeen[FISH_SPECIES_COUNT] = {};
+    double minScaleSeen = 999, maxScaleSeen = -999;
+    for (int iter = 0; iter < 200; iter++) {
+      fishes.clear();
+      maintainFishSpawns(fw, fishes, waterX, waterZ, 6);
+      for (const Fish& f : fishes) {
+        speciesSeen[f.species]++;
+        minScaleSeen = std::min(minScaleSeen, f.scale);
+        maxScaleSeen = std::max(maxScaleSeen, f.scale);
+      }
+    }
+    int distinctSpecies = 0;
+    for (int c : speciesSeen) if (c > 0) distinctSpecies++;
+    bool variedKinds = distinctSpecies >= 3;
+    bool variedSizes = foundWater && (maxScaleSeen - minScaleSeen) > 0.3;
+
+    Fish testFish;
+    testFish.species = FISH_COD;
+    testFish.position = Vec3(waterX + 0.5, waterSurfaceY + 1.5, waterZ + 0.5);
+    bool staysInWater = foundWater;
+    for (int i = 0; i < 600 && staysInWater; i++) {
+      updateFish(testFish, fw, 1.0 / 60.0, Vec3(0, 0, 0));
+      int fx = (int)std::floor(testFish.position.x), fy = (int)std::floor(testFish.position.y),
+          fz = (int)std::floor(testFish.position.z);
+      if (!isWater(fw.getBlock(fx, fy, fz))) staysInWater = false;
+    }
+
+    bool ok = foundWater && variedKinds && variedSizes && staysInWater;
+    check(ok, "fish_spawn_variety_and_stays_in_water");
+    if (!ok) {
+      std::fprintf(f, "  (foundWater=%d kinds=%d sizeSpread=%.2f staysInWater=%d)\n",
+                   foundWater, distinctSpecies, maxScaleSeen - minScaleSeen, staysInWater);
+    }
+  }
+
+  // Boats: placeable on water, refused on land or on top of another boat;
+  // drives forward while occupied and on water, sits inert while beached.
+  // Each check gets its own fresh World, same lesson as the fish test above
+  // — reloading one shared World's chunks at a distant column mid-test would
+  // silently invalidate whatever the earlier part of the test still needs.
+  {
+    World waterWorld;
+    int waterX = 0, waterZ = 0;
+    bool foundWater = false;
+    for (int x = -WORLD_RADIUS + 8; x < WORLD_RADIUS && !foundWater; x += 16) {
+      for (int z = -WORLD_RADIUS + 8; z < WORLD_RADIUS && !foundWater; z += 16) {
+        int b, sy;
+        columnInfoAt(x, z, b, sy);
+        if (sy <= SEA_LEVEL - 4) { waterX = x; waterZ = z; foundWater = true; }
+      }
+    }
+    waterWorld.updateLoadedChunks(waterX, waterZ);
+
+    std::vector<Boat> boats;
+    double surfaceY = 0;
+    bool placesOnWater = foundWater && canPlaceBoatAt(waterWorld, waterX, waterZ, boats, surfaceY);
+    bool refusesOverlap = false;
+    if (placesOnWater) {
+      Boat parked;
+      parked.position = Vec3(waterX + 0.5, surfaceY, waterZ + 0.5);
+      boats.push_back(parked);
+      double dummyY;
+      refusesOverlap = !canPlaceBoatAt(waterWorld, waterX, waterZ, boats, dummyY);
+    }
+
+    World landWorld;
+    int landX = 0, landZ = 0, landSurfaceY = 0;
+    bool foundLand = false;
+    for (int x = -WORLD_RADIUS + 8; x < WORLD_RADIUS && !foundLand; x += 16) {
+      for (int z = -WORLD_RADIUS + 8; z < WORLD_RADIUS && !foundLand; z += 16) {
+        int b, sy;
+        columnInfoAt(x, z, b, sy);
+        if (sy > SEA_LEVEL + 2) { landX = x; landZ = z; landSurfaceY = sy; foundLand = true; }
+      }
+    }
+    landWorld.updateLoadedChunks(landX, landZ);
+    double landDummyY;
+    std::vector<Boat> noBoats;
+    bool refusesLand = foundLand && !canPlaceBoatAt(landWorld, landX, landZ, noBoats, landDummyY);
+
+    // Driving: moves forward along its facing while occupied and on water.
+    Boat driving;
+    driving.position = Vec3(waterX + 0.5, surfaceY, waterZ + 0.5);
+    driving.occupied = true;
+    double startZ = driving.position.z;
+    for (int i = 0; i < 60; i++) updateBoat(driving, waterWorld, 1.0 / 60.0, 0.0, 1);
+    bool drivesOnWater = std::abs(driving.position.z - startZ) > 0.5;
+
+    // Beached: sits inert even with the same forward input, since it isn't
+    // over water.
+    Boat beached;
+    beached.position = Vec3(landX + 0.5, landSurfaceY + 1.0, landZ + 0.5);
+    beached.occupied = true;
+    double beachedStartX = beached.position.x, beachedStartZ = beached.position.z;
+    for (int i = 0; i < 60; i++) updateBoat(beached, landWorld, 1.0 / 60.0, 0.0, 1);
+    bool staysBeached = std::abs(beached.position.x - beachedStartX) < 1e-6 &&
+                        std::abs(beached.position.z - beachedStartZ) < 1e-6;
+
+    // nearestBoat skips occupied ones.
+    std::vector<Boat> mixedBoats;
+    Boat free; free.position = Vec3(waterX + 0.5, surfaceY, waterZ + 0.5); free.occupied = false;
+    Boat taken; taken.position = Vec3(waterX + 0.5, surfaceY, waterZ + 1.5); taken.occupied = true;
+    mixedBoats.push_back(taken);
+    mixedBoats.push_back(free);
+    bool skipsOccupied = nearestBoat(mixedBoats, free.position) == 1;
+
+    bool ok = placesOnWater && refusesOverlap && refusesLand && drivesOnWater && staysBeached &&
+              skipsOccupied;
+    check(ok, "boat_placement_driving_and_beaching");
+    if (!ok) {
+      std::fprintf(f, "  (placesOnWater=%d refusesOverlap=%d refusesLand=%d drivesOnWater=%d "
+                      "staysBeached=%d skipsOccupied=%d)\n",
+                   placesOnWater, refusesOverlap, refusesLand, drivesOnWater, staysBeached,
+                   skipsOccupied);
+    }
   }
 
   // world border: no chunks/terrain beyond it, and it blocks movement
@@ -4143,7 +4390,7 @@ static int runSelftest() {
     // they leave exactly the broken block this check exists to prevent.
     const uint8_t NOT_PLACEABLE[] = {
       ITEM_STICK, ITEM_WOOD_PICKAXE, ITEM_WOOD_AXE, ITEM_WOOD_SWORD, ITEM_STONE_HOE,
-      ITEM_WOOD_SHOVEL,
+      ITEM_WOOD_SHOVEL, ITEM_BOAT,
     };
     for (uint8_t id : NOT_PLACEABLE) {
       if (isPlaceable(id)) { toolsOk = false; if (firstBadTool < 0) firstBadTool = id; }
