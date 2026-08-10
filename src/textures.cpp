@@ -279,7 +279,7 @@ const TileDrawer TILE_DRAWERS[TILE_FIRST_ITEM] = {
 // sprites_generated.h). Tiles absent from this list, and named tiles with no
 // art supplied, keep their procedural drawing — the two coexist per tile.
 const char* spriteNameForTile(int tile) {
-  (void)tile;
+  if (tile == TILE_SWORD) return "sword";
   return nullptr;
 }
 

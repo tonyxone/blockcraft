@@ -2,6 +2,7 @@
 #include "textures.h"
 #include "gfx.h"
 #include "win_gl.h"
+#include "worldmap.h"
 
 namespace {
 
@@ -27,9 +28,14 @@ void buildPalette() {
       continue;
     }
     long sr = 0, sg = 0, sb = 0, n = 0;
+    // Tiles are stored ATLAS_TILE_PX apart (not TILE_PX — the atlas keeps
+    // extra resolution in reserve for hand-drawn art; see textures.h), and
+    // the atlas is exactly one tile tall. Using TILE_PX as the stride here
+    // used to walk into a neighbouring tile for every id past the first,
+    // which is why the map's colours didn't match their blocks.
     for (int y = 0; y < atlas.height; y++) {
-      for (int x = 0; x < TILE_PX; x++) {
-        const uint8_t* p = &atlas.pixels[(size_t)(y * atlas.width + tile * TILE_PX + x) * 4];
+      for (int x = 0; x < ATLAS_TILE_PX; x++) {
+        const uint8_t* p = &atlas.pixels[(size_t)(y * atlas.width + tile * ATLAS_TILE_PX + x) * 4];
         if (p[3] == 0) continue; // skip the transparent parts of cutouts
         sr += p[0];
         sg += p[1];
@@ -44,11 +50,30 @@ void buildPalette() {
 
 int clampi(int v, int lo, int hi) { return v < lo ? lo : (v > hi ? hi : v); }
 
+bool g_paletteBuilt = false;
+// The palette is pure CPU work (buildTextureAtlas + averaging pixels the
+// atlas already holds) and needs no GL context, unlike the rest of
+// minimapInit() — split out so headless callers (the selftest, worldmap.cpp)
+// can use block colours without a window ever having been created.
+void ensurePalette() {
+  if (g_paletteBuilt) return;
+  g_paletteBuilt = true;
+  buildPalette();
+}
+
 } // namespace
 
+void minimapBlockColor(uint8_t blockId, int& r, int& g, int& b) {
+  ensurePalette();
+  const Rgb& c = g_blockColor[blockId < BLOCK_TYPE_COUNT ? blockId : 0];
+  r = c.r;
+  g = c.g;
+  b = c.b;
+}
+
 void minimapInit() {
+  ensurePalette();
   if (g_tex) return;
-  buildPalette();
   g_pixels.assign((size_t)N * N * 4, 0);
   glGenTextures(1, &g_tex);
   glBindTexture(GL_TEXTURE_2D, g_tex);
@@ -121,6 +146,15 @@ void minimapUpdate(World& world, double playerX, double playerZ) {
         px[3] = 0;
         continue;
       }
+      // Generated (so the 3D world nearby is rendering it) doesn't mean
+      // explored (see worldmap.cpp's REVEAL_RADIUS) — a chunk can load well
+      // before the player has actually walked close enough to clear its
+      // mist, so the corner map gets the same black fog the full map does
+      // rather than spoiling everything within render distance for free.
+      if (!worldMapExplored(g_centerX - HALF + i, g_centerZ - HALF + j)) {
+        px[0] = 8; px[1] = 8; px[2] = 12; px[3] = 255;
+        continue;
+      }
       Rgb c = g_blockColor[surface[k] < BLOCK_TYPE_COUNT ? surface[k] : 0];
 
       // Relief: brighter when this column stands above the one to its
@@ -163,7 +197,7 @@ void minimapArrowDir(double yaw, double& dx, double& dy) {
   dy = -std::cos(yaw);
 }
 
-void drawMinimap(int winW, int winH, double playerYaw) {
+void drawMinimap(int winW, int winH, double playerYaw, const std::vector<Boat>& boats) {
   if (!g_tex || !g_haveMap) return;
 
   const double S = MINIMAP_SCREEN;
@@ -183,6 +217,35 @@ void drawMinimap(int winW, int winH, double playerYaw) {
   glEnd();
   glDisable(GL_TEXTURE_2D);
   drawRectOutline(x - 3, y - 3, S + 6, S + 6, 2, 1, 1, 1, 0.75);
+
+  // Boats and player-placed markers (worldmap.h) that fall within the
+  // window, projected the same way the player arrow below is: relative to
+  // g_centerX/g_centerZ, the block the texture was last rebuilt around,
+  // which tracks the player's own position.
+  auto worldToWindow = [&](double wx, double wz, double& sx, double& sy) -> bool {
+    double fi = wx - g_centerX + HALF, fj = wz - g_centerZ + HALF;
+    if (fi < 0 || fi >= N || fj < 0 || fj >= N) return false;
+    sx = x + fi * (S / N);
+    sy = y + fj * (S / N);
+    return true;
+  };
+  for (const Boat& boat : boats) {
+    double sx, sy;
+    if (!worldToWindow(boat.position.x, boat.position.z, sx, sy)) continue;
+    drawRect(sx - 2, sy - 2, 4, 4, 0.55, 0.38, 0.22, 1);
+    drawRectOutline(sx - 2.5, sy - 2.5, 5, 5, 1, 0, 0, 0, 0.85);
+  }
+  for (const Vec3& m : mapMarkers()) {
+    double sx, sy;
+    if (!worldToWindow(m.x, m.z, sx, sy)) continue;
+    glBegin(GL_TRIANGLE_FAN);
+    glColor4d(1, 0.82, 0.15, 1);
+    glVertex2d(sx, sy - 4);
+    glVertex2d(sx + 3, sy);
+    glVertex2d(sx, sy + 4);
+    glVertex2d(sx - 3, sy);
+    glEnd();
+  }
 
   // Player arrow at the centre. The map is north-up, so the arrow points
   // along the view direction projected onto the map: east is +x, north is

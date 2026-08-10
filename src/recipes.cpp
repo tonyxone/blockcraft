@@ -122,6 +122,12 @@ const Recipe CRAFT_RECIPES[] = {
   // own 5-plank shape, by request.
   { "Boat", ITEM_BOAT, 1, false,
     { "PPP", "P.P", "PPP" }, { { 'P', ITEM_PLANKS } } },
+
+  // --- weapons -------------------------------------------------------------
+  // A heavier stone blade than the standard Stone Sword (3 stone rather
+  // than 2, for +1 attack power) — by request, with its own hand-drawn icon.
+  { "The First Sword", ITEM_SWORD, 1, false,
+    { "C..", "C..", "CS." }, { { 'C', BLOCK_STONE }, { 'S', ITEM_STICK } } },
 };
 
 const int CRAFT_RECIPE_COUNT = (int)(sizeof(CRAFT_RECIPES) / sizeof(CRAFT_RECIPES[0]));
@@ -321,6 +327,7 @@ const char* craftItemName(uint8_t id) {
     case ITEM_WOOD_HOE: return "wooden hoe";
     case ITEM_STONE_HOE: return "stone hoe";
     case ITEM_BOAT: return "boat";
+    case ITEM_SWORD: return "the first sword";
     default: return "?";
   }
 }
@@ -361,6 +368,7 @@ int craftItemTile(uint8_t id) {
     case ITEM_WOOD_HOE: return TILE_WOOD_HOE;
     case ITEM_STONE_HOE: return TILE_STONE_HOE;
     case ITEM_BOAT: return TILE_BOAT;
+    case ITEM_SWORD: return TILE_SWORD;
     default: return TILE_NONE;
   }
 }

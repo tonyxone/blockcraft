@@ -1,6 +1,7 @@
 #include "tools.h"
 #include "recipes.h"
 #include "textures.h"
+#include "sprites_generated.h"
 #include "gfx.h"
 #include "win_gl.h"
 
@@ -30,6 +31,10 @@ const ToolVisual TOOL_VISUALS[] = {
   { ITEM_WOOD_HOE, BLOCK_WOOD, BLOCK_WOOD, TOOL_SHAPE_HOE },
   { ITEM_STONE_HOE, BLOCK_STONE, BLOCK_WOOD, TOOL_SHAPE_HOE },
   { ITEM_STICK, BLOCK_WOOD, BLOCK_WOOD, TOOL_SHAPE_STICK },
+  // Its own hand-drawn slot icon (art\sword.png), but the same stone-tier
+  // blade geometry as ITEM_STONE_SWORD in hand — the art only replaces the
+  // 2D icon, per art\README.md.
+  { ITEM_SWORD, BLOCK_STONE, BLOCK_WOOD, TOOL_SHAPE_SWORD },
 };
 const int TOOL_VISUAL_COUNT = (int)(sizeof(TOOL_VISUALS) / sizeof(TOOL_VISUALS[0]));
 
@@ -51,6 +56,78 @@ const BoxFace BOX_FACES[6] = {
 };
 const double UV_S[4] = { 0, 0, 1, 1 };
 const double UV_T[4] = { 0, 1, 1, 0 };
+
+// Same per-face shading every hand-rolled box in this game uses, scaled
+// against each pixel's own colour instead of a fixed material — same idea
+// as droppeditem.cpp's own voxelized item look.
+struct VoxelFace {
+  uint8_t shade;
+  int corners[4][3];
+};
+const VoxelFace VOXEL_FACES[6] = {
+  { 255, { { 0, 1, 0 }, { 0, 1, 1 }, { 1, 1, 1 }, { 1, 1, 0 } } },
+  { 154, { { 0, 0, 1 }, { 0, 0, 0 }, { 1, 0, 0 }, { 1, 0, 1 } } },
+  { 226, { { 1, 0, 0 }, { 1, 1, 0 }, { 1, 1, 1 }, { 1, 0, 1 } } },
+  { 188, { { 0, 0, 1 }, { 0, 1, 1 }, { 0, 1, 0 }, { 0, 0, 0 } } },
+  { 202, { { 1, 0, 1 }, { 1, 1, 1 }, { 0, 1, 1 }, { 0, 0, 1 } } },
+  { 177, { { 0, 0, 0 }, { 0, 1, 0 }, { 1, 1, 0 }, { 1, 0, 0 } } },
+};
+
+void drawVoxel(double x0, double y0, double z0, double s, double depth, uint8_t r, uint8_t g,
+              uint8_t b) {
+  for (const VoxelFace& face : VOXEL_FACES) {
+    glColor3ub((uint8_t)(r * face.shade / 255), (uint8_t)(g * face.shade / 255),
+              (uint8_t)(b * face.shade / 255));
+    glBegin(GL_QUADS);
+    for (int i = 0; i < 4; i++) {
+      glVertex3d(x0 + face.corners[i][0] * s, y0 + face.corners[i][1] * s,
+                z0 + face.corners[i][2] * depth);
+    }
+    glEnd();
+  }
+}
+
+std::unordered_map<int, GLuint> g_spriteToolLists;
+
+// A hand-drawn tool (art\README.md) is held as its own drawing, voxel-
+// extruded exactly like a dropped item's icon (droppeditem.cpp) — not the
+// generic per-ToolShape box geometry drawHead() below, which for a sword
+// would be visually identical to the procedural Stone Sword regardless of
+// what art the slot icon carries, defeating the point of supplying custom
+// art in the first place. Sampled at the atlas's full ATLAS_TILE_PX
+// resolution (not the coarser TILE_PX droppeditem.cpp uses) so a sword
+// drawn natively at 32x32 keeps all of its actual detail instead of losing
+// three-quarters of it to a stride built for 16x16 procedural art doubled
+// up to fill the same tile.
+GLuint spriteToolVoxelList(uint8_t item) {
+  auto found = g_spriteToolLists.find(item);
+  if (found != g_spriteToolLists.end()) return found->second;
+
+  GLuint list = glGenLists(1);
+  glNewList(list, GL_COMPILE);
+  int tile = craftItemTile(item);
+  if (tile >= 0) {
+    const Atlas& atlas = buildTextureAtlas();
+    const double SIZE = 15.0; // overall height, matching the procedural sword's own scale
+    const double CELL = SIZE / ATLAS_TILE_PX;
+    const double DEPTH = CELL * 1.5;
+    for (int gy = 0; gy < ATLAS_TILE_PX; gy++) {
+      for (int gx = 0; gx < ATLAS_TILE_PX; gx++) {
+        int ax = tile * ATLAS_TILE_PX + gx;
+        size_t idx = (size_t)(gy * atlas.width + ax) * 4; // atlas row 0 = bottom = the grip end
+        if (idx + 3 >= atlas.pixels.size() || atlas.pixels[idx + 3] < 128) continue;
+        double x0 = (gx - ATLAS_TILE_PX / 2.0) * CELL;
+        double y0 = gy * CELL;
+        double z0 = -DEPTH / 2.0;
+        drawVoxel(x0, y0, z0, CELL, DEPTH, atlas.pixels[idx], atlas.pixels[idx + 1],
+                 atlas.pixels[idx + 2]);
+      }
+    }
+  }
+  glEndList();
+  g_spriteToolLists[item] = list;
+  return list;
+}
 
 // Immediate-mode box (small one-off shapes redrawn every frame, same style
 // as playermodel.cpp's drawBox — not worth a display list).
@@ -83,6 +160,8 @@ const double REST_TILT_DEG = 45.0;
 // -35) turned the head across the body and read as carrying the thing at an
 // angle to yourself.
 const double GRIP_ROLL_DEG = 0.0;
+// Extra haft-spin for the sword only — see drawGrippedTool.
+const double SWORD_GRIP_YAW_DEG = -30.0;
 // The strike drives the head down and forward past horizontal; the windup
 // before it is smaller, just enough to read as "raise, then smash".
 const double SWING_STRIKE_DEG = 80.0;
@@ -212,6 +291,8 @@ double attackPower(uint8_t selectedItemId) {
       return 1.0;
     case ITEM_STONE_SWORD:
       return 2.0;
+    case ITEM_SWORD:
+      return 3.0;
     case ITEM_STICK: // equippable, but deliberately below the bare-hand floor
       return 0.5;
     default:
@@ -236,6 +317,9 @@ void drawGrippedTool(uint8_t item, double swingT) {
   const ToolVisual* v = toolVisualFor(item);
   if (!v) return;
 
+  int tile = craftItemTile(item);
+  const GeneratedSprite* sprite = generatedSpriteNamed(spriteNameForTile(tile));
+
   // Negative tilt swings the head forward (-Z). The phase adds a windup
   // backwards and then drives well past rest, so the tool comes down on the
   // block instead of merely waving toward it.
@@ -243,23 +327,37 @@ void drawGrippedTool(uint8_t item, double swingT) {
   double swingDeg = phase * (phase >= 0 ? SWING_STRIKE_DEG : SWING_LIFT_DEG);
   double tilt = -(REST_TILT_DEG + swingDeg);
 
-  glEnable(GL_TEXTURE_2D);
-  glBindTexture(GL_TEXTURE_2D, atlasTextureId());
-
   glPushMatrix();
-  glRotated(GRIP_ROLL_DEG, 0, 1, 0);
+  // A sword's blade is a flat slab; held square like every other tool it
+  // presents nearly edge-on in first person — only the thin side shows.
+  // Spinning it a little around the haft turns the flat of the blade toward
+  // the eye, so the sword actually reads as a sword. Verified against the
+  // FP transform chain: -30 degrees visibly widens the blade on screen,
+  // +30 narrows it (fully edge-on).
+  glRotated(GRIP_ROLL_DEG + (v->shape == TOOL_SHAPE_SWORD ? SWORD_GRIP_YAW_DEG : 0), 0, 1, 0);
   glRotated(tilt, 1, 0, 0);
 
-  // Handle: a thin haft rising from the grip. Every two-handed tool shares
-  // one long haft; a sword's one-handed grip is shorter (SWORD_HANDLE_LEN)
-  // AND thinner than the blade above it — a sword gripped on the same 2x2
-  // haft as a pickaxe reads as a stick, not a sword.
-  if (v->shape == TOOL_SHAPE_SWORD) {
-    drawAtlasBox(-0.6, 0, -0.6, 1.2, SWORD_HANDLE_LEN, 1.2, v->handleBlock);
+  if (sprite && sprite->rgba) {
+    // Hand-drawn art: held as the actual drawing (see spriteToolVoxelList
+    // above) rather than generic per-ToolShape geometry — blade, guard and
+    // grip all come from the one image, so nothing more to draw.
+    glDisable(GL_TEXTURE_2D);
+    glCallList(spriteToolVoxelList(item));
+    glEnable(GL_TEXTURE_2D);
   } else {
-    drawAtlasBox(-1, 0, -1, 2, TOOL_HANDLE_LEN, 2, v->handleBlock);
+    glEnable(GL_TEXTURE_2D);
+    glBindTexture(GL_TEXTURE_2D, atlasTextureId());
+    // Handle: a thin haft rising from the grip. Every two-handed tool shares
+    // one long haft; a sword's one-handed grip is shorter (SWORD_HANDLE_LEN)
+    // AND thinner than the blade above it — a sword gripped on the same 2x2
+    // haft as a pickaxe reads as a stick, not a sword.
+    if (v->shape == TOOL_SHAPE_SWORD) {
+      drawAtlasBox(-0.6, 0, -0.6, 1.2, SWORD_HANDLE_LEN, 1.2, v->handleBlock);
+    } else {
+      drawAtlasBox(-1, 0, -1, 2, TOOL_HANDLE_LEN, 2, v->handleBlock);
+    }
+    drawHead(*v);
   }
-  drawHead(*v);
 
   glPopMatrix();
 }
