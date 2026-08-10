@@ -256,6 +256,44 @@ void drawBox(const Part& part, double x0, double y0, double z0,
 
 double mixAngle(double a, double b, double t) { return a + (b - a) * t; }
 
+// A rowboat's oar (PlayerAnim::boating): plain wood, flat-shaded rather than
+// skin-textured like the body parts above, since it isn't part of the
+// character's own skin — same per-face shading convention every hand-rolled
+// prop elsewhere in this game uses (animal.cpp, tools.cpp, boat.cpp).
+struct FlatFace {
+  int corners[4][3];
+  uint8_t shade;
+};
+const FlatFace PADDLE_FACES[6] = {
+  { { { 0, 1, 0 }, { 0, 1, 1 }, { 1, 1, 1 }, { 1, 1, 0 } }, 255 },
+  { { { 0, 0, 1 }, { 0, 0, 0 }, { 1, 0, 0 }, { 1, 0, 1 } }, 154 },
+  { { { 1, 0, 0 }, { 1, 1, 0 }, { 1, 1, 1 }, { 1, 0, 1 } }, 226 },
+  { { { 0, 0, 0 }, { 0, 1, 0 }, { 1, 1, 0 }, { 1, 0, 0 } }, 177 },
+  { { { 0, 0, 1 }, { 0, 1, 1 }, { 0, 1, 0 }, { 0, 0, 0 } }, 188 },
+  { { { 1, 0, 1 }, { 1, 1, 1 }, { 0, 1, 1 }, { 0, 0, 1 } }, 202 },
+};
+void drawPaddleBox(double x0, double y0, double z0, double w, double h, double d, double r,
+                   double g, double b) {
+  for (const FlatFace& face : PADDLE_FACES) {
+    double shade = face.shade / 255.0;
+    glColor3d(r * shade, g * shade, b * shade);
+    glBegin(GL_QUADS);
+    for (int i = 0; i < 4; i++) {
+      glVertex3d(x0 + face.corners[i][0] * w, y0 + face.corners[i][1] * h,
+                z0 + face.corners[i][2] * d);
+    }
+    glEnd();
+  }
+}
+
+// A thin shaft hanging down from the grip with a flat blade at the bottom
+// end — held in model-pixel units, same scale as the arm it's attached to.
+void drawPaddle() {
+  const double R = 0.55, G = 0.38, B = 0.22;
+  drawPaddleBox(-0.75, -16, -0.75, 1.5, 16, 1.5, R, G, B); // shaft
+  drawPaddleBox(-2.5, -20, -0.5, 5, 5, 1, R, G, B);        // blade
+}
+
 } // namespace
 
 GLuint uploadSkin() {
@@ -482,10 +520,29 @@ void drawPlayerModel(const Player& player, const PlayerAnim& anim) {
     }
   }
 
+  // Riding a boat overrides all of the above: sitting (both legs bent
+  // forward at the hip — there's no knee joint to bend instead) and rowing
+  // (both oars stroke together, in phase, the way a rowboat's two oars pull
+  // in sync — unlike a canoe's single alternating paddle).
+  if (anim.boating) {
+    legL = 80.0;
+    legR = 80.0;
+    double row = std::sin(anim.rowPhase) * 32.0;
+    armL = -18.0 + row;
+    armR = -18.0 + row;
+  }
+
   glPushMatrix();
   glTranslated(player.position.x, player.position.y, player.position.z);
   glRotated(player.yaw * 180.0 / PI, 0, 1, 0);
   glScaled(S, S, S);
+  // player.position (feet) tracks the boat's own position, which is the
+  // water surface the hull floats on — well below the low, shallow hull's
+  // seat. Drop the WHOLE rigid model (head/torso/arms/legs all move
+  // together, so nothing but this offset needs to change) so the hips
+  // settle onto the seat instead of floating above the gunwale with the
+  // boat's walls hanging in mid-air below the character.
+  if (anim.boating) glTranslated(0, -9.33, 0);
 
   glEnable(GL_TEXTURE_2D);
   glBindTexture(GL_TEXTURE_2D, g_currentChar == PlayerCharacter::Alex ? g_texAlex : g_texSteve);
@@ -504,7 +561,7 @@ void drawPlayerModel(const Player& player, const PlayerAnim& anim) {
   // replaying the arm's own pivot rotation, then cancel that rotation's
   // contribution to ORIENTATION so the tool keeps its own independent grip
   // tilt and swing regardless of the arm's current swing angle.
-  if (anim.heldTool >= 0) {
+  if (anim.heldTool >= 0 && !anim.boating) {
     glPushMatrix();
     glTranslated(0, 22, 0);
     glRotated(armR, 1, 0, 0);
@@ -518,6 +575,48 @@ void drawPlayerModel(const Player& player, const PlayerAnim& anim) {
     drawGrippedTool((uint8_t)anim.heldTool, anim.swingLeft ? 0.0 : anim.swing);
     glPopMatrix();
     glBindTexture(GL_TEXTURE_2D, g_currentChar == PlayerCharacter::Alex ? g_texAlex : g_texSteve);
+  }
+
+  // Paddles: unlike the gripped tool above, these DO follow the arm's own
+  // rotation for orientation, not just position — the whole point is that
+  // the oar visibly swings through the stroke with the arm, not that it
+  // holds some independent tilt of its own. The grip starts a couple of
+  // pixels outside the hand (not centred on it like the tool grip is) —
+  // flush against the hand, the paddle's thin shaft is mostly nested inside
+  // the arm's own (wider) box and the hand hides it entirely; starting just
+  // outside keeps it visibly touching the hand while giving the outward
+  // tilt below room to swing the shaft clear of the boat's own side wall
+  // (same wood color as the hull, so overlapping it would just read as more
+  // hull) with the blade dipping into the water beside the boat.
+  if (anim.boating) {
+    glDisable(GL_TEXTURE_2D);
+    // The 3D pass renders with back-face culling on, and mirroring the tilt
+    // (-28 vs +28, for the left vs right paddle) mirrors which of each box's
+    // faces end up back-facing too — the right paddle's outward faces stay
+    // front-facing from behind, but the left paddle's equivalent faces don't,
+    // so half of it gets culled away to almost nothing. The paddle is thin
+    // decorative geometry with no interior ever exposed, so there's no
+    // downside to just rendering both sides of every face here.
+    glDisable(GL_CULL_FACE);
+    glPushMatrix();
+    glTranslated(0, 22, 0);
+    glRotated(armL, 1, 0, 0);
+    glTranslated(0, -22, 0);
+    glTranslated(armLX - 2, 12, 0);
+    glRotated(-28, 0, 0, 1);
+    drawPaddle();
+    glPopMatrix();
+
+    glPushMatrix();
+    glTranslated(0, 22, 0);
+    glRotated(armR, 1, 0, 0);
+    glTranslated(0, -22, 0);
+    glTranslated(armRX + armPart.w + 2, 12, 0);
+    glRotated(28, 0, 0, 1);
+    drawPaddle();
+    glPopMatrix();
+    glEnable(GL_CULL_FACE);
+    glEnable(GL_TEXTURE_2D);
   }
 
   drawBox(LEG, -4, 0, -2, 12, legL);         // left leg, hip pivot

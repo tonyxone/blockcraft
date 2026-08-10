@@ -15,32 +15,55 @@ namespace {
 const double PI = 3.14159265358979323846;
 
 // --- species data ------------------------------------------------------
-// Proportions/colors are approximated from the reference renders (body
-// silhouette, dominant palette), not pixel-measured — the same "researched,
-// not traced" approach item_art.cpp already documents for its own sprites.
+// Redrawn against the vanilla renders in this project's reference set
+// (Desktop\animal\*.png, themselves minecraft.wiki's JE1/BE1 renders): the
+// generic "box body + cube head" build stays, but every species now gets
+// the parts that actually identify it — a pig's snout, a cow's horns and
+// pale muzzle, a sheep's dark face under a wool cap, a wolf's tan muzzle
+// with a black nose and a bushy raised tail, a rabbit's long upright ears,
+// the cats' long curled-up tails, a panda's black legs, ears, eye patches
+// and shoulder band, a polar bear's gray muzzle.
 struct QuadrupedShape {
   double bodyLen, bodyWid, bodyHt;
   double headSize;
   double legHt, legThick;
-  double tailLen;  // 0 = no tail
-  double earSize;  // 0 = no ears
-  double r0, g0, b0; // body + head
-  double r1, g1, b1; // legs
-  double r2, g2, b2; // accent: ears/tail/horns/nose
+  double earW, earH;                    // 0 = no ears; depth is earW * 0.5
+  double hornSize;                      // 0 = none; light cubes at the head's top corners
+  double snoutW, snoutH, snoutL;        // 0 = no muzzle; sits low on the face
+  bool blackNose;                       // dark tip across the muzzle's front end
+  bool eyePatches;                      // panda: dark patches on the upper face
+  bool shoulderBand;                    // panda: dark band over the front of the body
+  bool woolCap;                         // sheep: body-colored slab over the dark face
+  double tailLen, tailThick, tailAngle; // tailLen 0 = no tail; angle <0 tips up
+  double bodyR, bodyG, bodyB;
+  double headR, headG, headB;           // == body except the dark-faced sheep
+  double legR, legG, legB;
+  double accR, accG, accB;              // ears, horns, eye patches, shoulder band
+  double snoutR, snoutG, snoutB;
 };
 
 // clang-format off
 const QuadrupedShape QUADRUPED_SHAPES[ANIMAL_SPECIES_COUNT] = {
-  /* PIG        */ { 0.60, 0.40, 0.35, 0.30, 0.35, 0.10, 0.10, 0.08, 0.92,0.68,0.68, 0.92,0.68,0.68, 0.75,0.50,0.50 },
-  /* COW        */ { 0.75, 0.45, 0.50, 0.32, 0.50, 0.12, 0.15, 0.08, 0.22,0.17,0.14, 0.88,0.86,0.80, 0.88,0.86,0.80 },
-  /* CHICKEN    */ { 0,0,0,0,0,0,0,0, 0,0,0, 0,0,0, 0,0,0 }, // unused — chicken has its own renderer
-  /* SHEEP      */ { 0.60, 0.45, 0.45, 0.30, 0.35, 0.10, 0.08, 0.08, 0.90,0.88,0.84, 0.74,0.60,0.48, 0.74,0.60,0.48 },
-  /* WOLF       */ { 0.55, 0.28, 0.35, 0.26, 0.40, 0.09, 0.12, 0.07, 0.56,0.56,0.58, 0.56,0.56,0.58, 0.68,0.54,0.40 },
-  /* RABBIT     */ { 0.28, 0.20, 0.20, 0.18, 0.16, 0.06, 0.05, 0.13, 0.40,0.28,0.20, 0.40,0.28,0.20, 0.40,0.28,0.20 },
-  /* OCELOT     */ { 0.45, 0.22, 0.25, 0.20, 0.28, 0.07, 0.35, 0.06, 0.78,0.68,0.40, 0.78,0.68,0.40, 0.52,0.40,0.20 },
-  /* CAT        */ { 0.42, 0.20, 0.22, 0.19, 0.25, 0.06, 0.32, 0.06, 0.85,0.55,0.22, 0.85,0.55,0.22, 0.90,0.85,0.75 },
-  /* PANDA      */ { 0.65, 0.45, 0.40, 0.33, 0.30, 0.13, 0.06, 0.10, 0.92,0.92,0.90, 0.08,0.08,0.08, 0.08,0.08,0.08 },
-  /* POLAR_BEAR */ { 0.85, 0.42, 0.42, 0.30, 0.42, 0.14, 0.08, 0.06, 0.90,0.91,0.88, 0.90,0.91,0.88, 0.10,0.10,0.10 },
+  /* PIG        */ { 0.60,0.40,0.35, 0.30, 0.35,0.10, 0.08,0.06, 0,    0.16,0.12,0.07, false,false,false,false, 0.08,0.04,-60,
+                     0.94,0.64,0.60, 0.94,0.64,0.60, 0.94,0.64,0.60, 0.88,0.55,0.52, 0.88,0.55,0.52 },
+  /* COW        */ { 0.75,0.45,0.50, 0.32, 0.50,0.12, 0.10,0.05, 0.07, 0.24,0.14,0.08, false,false,false,false, 0.30,0.03, 40,
+                     0.24,0.18,0.14, 0.24,0.18,0.14, 0.24,0.18,0.14, 0.82,0.80,0.74, 0.78,0.72,0.66 },
+  /* CHICKEN    */ { 0,0,0, 0, 0,0, 0,0, 0, 0,0,0, false,false,false,false, 0,0,0,
+                     0,0,0, 0,0,0, 0,0,0, 0,0,0, 0,0,0 }, // unused — chicken has its own renderer
+  /* SHEEP      */ { 0.60,0.45,0.45, 0.28, 0.35,0.10, 0.07,0.05, 0,    0.08,0.06,0.03, false,false,false,true, 0.08,0.04,-20,
+                     0.88,0.87,0.82, 0.66,0.55,0.46, 0.66,0.55,0.46, 0.66,0.55,0.46, 0.85,0.55,0.55 },
+  /* WOLF       */ { 0.55,0.28,0.35, 0.26, 0.40,0.09, 0.09,0.10, 0,    0.12,0.10,0.12, true, false,false,false, 0.25,0.09,-45,
+                     0.75,0.75,0.77, 0.75,0.75,0.77, 0.75,0.75,0.77, 0.42,0.42,0.44, 0.83,0.75,0.65 },
+  /* RABBIT     */ { 0.28,0.20,0.20, 0.18, 0.16,0.06, 0.05,0.22, 0,    0.06,0.05,0.03, false,false,false,false, 0.06,0.06,  0,
+                     0.47,0.39,0.30, 0.47,0.39,0.30, 0.47,0.39,0.30, 0.47,0.39,0.30, 0.85,0.62,0.68 },
+  /* OCELOT     */ { 0.45,0.22,0.25, 0.20, 0.28,0.07, 0.06,0.06, 0,    0.10,0.07,0.06, false,false,false,false, 0.35,0.05,-60,
+                     0.86,0.73,0.42, 0.86,0.73,0.42, 0.86,0.73,0.42, 0.72,0.58,0.30, 0.90,0.82,0.60 },
+  /* CAT        */ { 0.42,0.20,0.22, 0.19, 0.25,0.06, 0.06,0.06, 0,    0.10,0.07,0.05, false,false,false,false, 0.32,0.05,-60,
+                     0.89,0.62,0.26, 0.89,0.62,0.26, 0.89,0.62,0.26, 0.78,0.50,0.20, 0.93,0.88,0.76 },
+  /* PANDA      */ { 0.65,0.45,0.40, 0.33, 0.30,0.13, 0.08,0.06, 0,    0.18,0.12,0.08, true, true, true, false, 0,0,0,
+                     0.92,0.92,0.90, 0.92,0.92,0.90, 0.08,0.08,0.08, 0.08,0.08,0.08, 0.92,0.92,0.90 },
+  /* POLAR_BEAR */ { 1.05,0.58,0.55, 0.36, 0.48,0.17, 0.08,0.06, 0,    0.20,0.14,0.14, true, false,false,false, 0.06,0.05,  0,
+                     0.94,0.95,0.91, 0.94,0.95,0.91, 0.94,0.95,0.91, 0.94,0.95,0.91, 0.72,0.73,0.68 },
 };
 // clang-format on
 
@@ -59,7 +82,7 @@ const AnimalSpeciesDef ANIMAL_SPECIES[ANIMAL_SPECIES_COUNT] = {
   /* OCELOT     */ { "ocelot",      6, 3.0, { true,  false, false, false }, 0.22, 0.50 },
   /* CAT        */ { "cat",         6, 3.0, { true,  false, false, false }, 0.20, 0.45 },
   /* PANDA      */ { "panda",      20, 1.0, { true,  false, false, false }, 0.32, 0.70 },
-  /* POLAR_BEAR */ { "polar bear", 30, 0.7, { false, false, false, true  }, 0.32, 0.85 },
+  /* POLAR_BEAR */ { "polar bear", 30, 0.7, { false, false, false, true  }, 0.38, 1.05 },
 };
 
 int meatDropFor(AnimalSpecies species) {
@@ -175,30 +198,80 @@ void drawQuadruped(const Animal& a, const QuadrupedShape& s) {
   double legY = s.legHt;
 
   // body
-  drawBox(-s.bodyWid / 2, legY, -s.bodyLen / 2, s.bodyWid, s.bodyHt, s.bodyLen, s.r0, s.g0, s.b0);
+  drawBox(-s.bodyWid / 2, legY, -s.bodyLen / 2, s.bodyWid, s.bodyHt, s.bodyLen, s.bodyR, s.bodyG,
+          s.bodyB);
+
+  // panda's black shoulders: a slightly oversized band over the front half
+  // of the body, so the white body still shows past it toward the rear
+  if (s.shoulderBand) {
+    drawBox(-s.bodyWid / 2 - 0.012, legY - 0.012, -s.bodyLen / 2 - 0.012, s.bodyWid + 0.024,
+            s.bodyHt + 0.024, s.bodyLen * 0.42, s.accR, s.accG, s.accB);
+  }
 
   // head: centered in X, poking forward (-Z) of the body, near the top
   double headY0 = legY + s.bodyHt - s.headSize * 0.75;
   double headZ0 = -s.bodyLen / 2 - s.headSize * 0.55;
-  drawBox(-s.headSize / 2, headY0, headZ0, s.headSize, s.headSize, s.headSize, s.r0, s.g0, s.b0);
+  drawBox(-s.headSize / 2, headY0, headZ0, s.headSize, s.headSize, s.headSize, s.headR, s.headG,
+          s.headB);
 
-  // ears: two small boxes on top of the head's back corners
-  if (s.earSize > 0) {
-    double earY = headY0 + s.headSize;
-    double earZ = headZ0 + s.headSize * 0.15;
-    drawBox(-s.headSize / 2 + s.earSize * 0.1, earY, earZ, s.earSize, s.earSize, s.earSize * 0.5,
-           s.r2, s.g2, s.b2);
-    drawBox(s.headSize / 2 - s.earSize * 1.1, earY, earZ, s.earSize, s.earSize, s.earSize * 0.5,
-           s.r2, s.g2, s.b2);
+  // muzzle: a box low on the face, protruding forward — the pig's snout,
+  // the cow's pale mouth, the wolf/bear muzzle, the sheep/rabbit's pink nose
+  if (s.snoutL > 0) {
+    double snoutY = headY0 + s.headSize * 0.08;
+    drawBox(-s.snoutW / 2, snoutY, headZ0 - s.snoutL, s.snoutW, s.snoutH, s.snoutL, s.snoutR,
+            s.snoutG, s.snoutB);
+    if (s.blackNose) {
+      // dark tip across the top of the muzzle's front end (wolf, bears)
+      drawBox(-s.snoutW / 2, snoutY + s.snoutH * 0.5, headZ0 - s.snoutL - 0.02, s.snoutW,
+              s.snoutH * 0.5, 0.04, 0.08, 0.07, 0.07);
+    }
   }
 
-  // tail: a thin box angled up and back from the rear of the body
+  // panda's eye patches: dark plates on the upper corners of the face
+  if (s.eyePatches) {
+    double p = s.headSize * 0.2;
+    drawBox(-s.headSize * 0.42, headY0 + s.headSize * 0.48, headZ0 - 0.012, p, p * 1.4, 0.02,
+            s.accR, s.accG, s.accB);
+    drawBox(s.headSize * 0.42 - p, headY0 + s.headSize * 0.48, headZ0 - 0.012, p, p * 1.4, 0.02,
+            s.accR, s.accG, s.accB);
+  }
+
+  // sheep's wool cap: a body-colored slab over the dark face, leaving the
+  // face itself showing only below it
+  if (s.woolCap) {
+    drawBox(-s.headSize / 2 - 0.01, headY0 + s.headSize * 0.68, headZ0 - 0.01, s.headSize + 0.02,
+            s.headSize * 0.34, s.headSize + 0.02, s.bodyR, s.bodyG, s.bodyB);
+  }
+
+  // ears: two boxes on top of the head's back corners — tiny on most
+  // species, long and upright on the rabbit
+  if (s.earW > 0) {
+    double earY = headY0 + s.headSize;
+    double earZ = headZ0 + s.headSize * 0.15;
+    drawBox(-s.headSize / 2 + s.earW * 0.1, earY, earZ, s.earW, s.earH, s.earW * 0.5, s.accR,
+            s.accG, s.accB);
+    drawBox(s.headSize / 2 - s.earW * 1.1, earY, earZ, s.earW, s.earH, s.earW * 0.5, s.accR,
+            s.accG, s.accB);
+  }
+
+  // horns: light cubes at the head's top corners, just outside the ears
+  if (s.hornSize > 0) {
+    double hY = headY0 + s.headSize * 0.9;
+    drawBox(-s.headSize / 2 - s.hornSize * 0.4, hY, headZ0 + s.headSize * 0.25, s.hornSize,
+            s.hornSize, s.hornSize, s.accR, s.accG, s.accB);
+    drawBox(s.headSize / 2 - s.hornSize * 0.6, hY, headZ0 + s.headSize * 0.25, s.hornSize,
+            s.hornSize, s.hornSize, s.accR, s.accG, s.accB);
+  }
+
+  // tail: a box angled back from the rear of the body — short and raised on
+  // a pig, long and curled up on the cats, thick on the wolf, drooping on
+  // the cow (positive angle), a puff on the rabbit
   if (s.tailLen > 0) {
-    double tailThick = s.legThick * 0.7;
     glPushMatrix();
     glTranslated(0, legY + s.bodyHt * 0.75, s.bodyLen / 2);
-    glRotated(-35, 1, 0, 0);
-    drawBox(-tailThick / 2, 0, 0, tailThick, tailThick, s.tailLen, s.r2, s.g2, s.b2);
+    glRotated(s.tailAngle, 1, 0, 0);
+    drawBox(-s.tailThick / 2, -s.tailThick / 2, 0, s.tailThick, s.tailThick, s.tailLen, s.bodyR,
+            s.bodyG, s.bodyB);
     glPopMatrix();
   }
 
@@ -206,17 +279,20 @@ void drawQuadruped(const Animal& a, const QuadrupedShape& s) {
   // swing together, opposite the front-right + back-left pair).
   double insetX = s.bodyWid / 2 - s.legThick * 0.6;
   double insetZ = s.bodyLen / 2 - s.legThick * 0.6;
+
   double swing = a.moving ? std::sin(a.animPhase) * 25.0 : 0.0;
-  drawLeg(-insetX, legY, -insetZ, s.legThick, s.legHt, swing, s.r1, s.g1, s.b1);
-  drawLeg(insetX, legY, -insetZ, s.legThick, s.legHt, -swing, s.r1, s.g1, s.b1);
-  drawLeg(-insetX, legY, insetZ, s.legThick, s.legHt, -swing, s.r1, s.g1, s.b1);
-  drawLeg(insetX, legY, insetZ, s.legThick, s.legHt, swing, s.r1, s.g1, s.b1);
+  drawLeg(-insetX, legY, -insetZ, s.legThick, s.legHt, swing, s.legR, s.legG, s.legB);
+  drawLeg(insetX, legY, -insetZ, s.legThick, s.legHt, -swing, s.legR, s.legG, s.legB);
+  drawLeg(-insetX, legY, insetZ, s.legThick, s.legHt, -swing, s.legR, s.legG, s.legB);
+  drawLeg(insetX, legY, insetZ, s.legThick, s.legHt, swing, s.legR, s.legG, s.legB);
 
   glPopMatrix();
 }
 
-// Chicken is the one biped: body, head, beak, wattle, two flat wings, two
-// thin centered legs.
+// Chicken is the one biped: body, head, beak, wattle, two flat wings, a
+// tail, two thin centered legs with flat feet — matched to the vanilla
+// render (wide flat orange beak spanning the face, red wattle under it,
+// pale yellow legs).
 void drawChicken(const Animal& a) {
   glPushMatrix();
   glTranslated(a.position.x, a.position.y, a.position.z);
@@ -227,6 +303,7 @@ void drawChicken(const Animal& a) {
   const double bodyW = 0.30, bodyH = 0.28, bodyL = 0.38;
   const double headSize = 0.16;
   const double WHITE_R = 0.93, WHITE_G = 0.93, WHITE_B = 0.90;
+  const double LEG_R = 0.85, LEG_G = 0.72, LEG_B = 0.30; // pale yellow
 
   double bodyY0 = legHt;
   drawBox(-bodyW / 2, bodyY0, -bodyL / 2, bodyW, bodyH, bodyL, WHITE_R, WHITE_G, WHITE_B);
@@ -235,27 +312,37 @@ void drawChicken(const Animal& a) {
   double headZ0 = -bodyL / 2 - headSize * 0.5;
   drawBox(-headSize / 2, headY0, headZ0, headSize, headSize, headSize, WHITE_R, WHITE_G, WHITE_B);
 
-  // beak: small orange wedge poking forward of the head
-  double beakSize = headSize * 0.4;
-  drawBox(-beakSize / 2, headY0 + headSize * 0.3, headZ0 - beakSize, beakSize, beakSize * 0.6,
-         beakSize, 0.85, 0.55, 0.15);
+  // beak: a wide flat orange box spanning most of the face
+  double beakW = headSize * 0.6, beakL = headSize * 0.45;
+  drawBox(-beakW / 2, headY0 + headSize * 0.3, headZ0 - beakL, beakW, headSize * 0.3, beakL,
+          LEG_R, LEG_G, LEG_B);
 
   // wattle: tiny red box under the beak
   double wattleSize = headSize * 0.3;
   drawBox(-wattleSize / 2, headY0, headZ0 - wattleSize * 0.5, wattleSize, wattleSize * 0.6,
-         wattleSize, 0.75, 0.12, 0.12);
+          wattleSize, 0.75, 0.12, 0.12);
 
   // wings: thin flat plates on the sides of the body
   double wingT = 0.04;
   drawBox(-bodyW / 2 - wingT, bodyY0 + bodyH * 0.25, -bodyL * 0.3, wingT, bodyH * 0.6, bodyL * 0.5,
-         0.85, 0.85, 0.82);
+          0.85, 0.85, 0.82);
   drawBox(bodyW / 2, bodyY0 + bodyH * 0.25, -bodyL * 0.3, wingT, bodyH * 0.6, bodyL * 0.5, 0.85,
-         0.85, 0.82);
+          0.85, 0.82);
 
-  // 2 legs, centered under the body (not at the corners)
+  // tail: a small box angled up from the rear of the body
+  glPushMatrix();
+  glTranslated(0, bodyY0 + bodyH * 0.7, bodyL / 2);
+  glRotated(-45, 1, 0, 0);
+  drawBox(-0.05, -0.05, 0, 0.10, 0.10, 0.16, WHITE_R, WHITE_G, WHITE_B);
+  glPopMatrix();
+
+  // 2 legs, centered under the body (not at the corners), each on a flat
+  // foot pointing forward
   double swing = a.moving ? std::sin(a.animPhase) * 25.0 : 0.0;
-  drawLeg(-legThick * 1.5, legHt, 0, legThick, legHt, swing, 0.85, 0.55, 0.15);
-  drawLeg(legThick * 1.5, legHt, 0, legThick, legHt, -swing, 0.85, 0.55, 0.15);
+  drawLeg(-legThick * 1.5, legHt, 0, legThick, legHt, swing, LEG_R, LEG_G, LEG_B);
+  drawLeg(legThick * 1.5, legHt, 0, legThick, legHt, -swing, LEG_R, LEG_G, LEG_B);
+  drawBox(-legThick * 1.5 - 0.035, 0, -0.07, 0.07, 0.02, 0.11, LEG_R, LEG_G, LEG_B);
+  drawBox(legThick * 1.5 - 0.035, 0, -0.07, 0.07, 0.02, 0.11, LEG_R, LEG_G, LEG_B);
 
   glPopMatrix();
 }
@@ -279,7 +366,11 @@ void updateAnimal(Animal& a, World& world, double dt) {
   const AnimalSpeciesDef& def = ANIMAL_SPECIES[a.species];
   const double WALK_SPEED = 1.3;
   const double GRAVITY = 28;
-  const double JUMP_SPEED = 7.5;
+  // v^2/2g = 1.29 blocks of rise — clears a single ledge with real margin
+  // (the old 7.5 worked out to 1.004, a knife's edge the discrete timestep
+  // regularly shaved below 1 block, stranding small animals at every ledge)
+  // while staying well under two.
+  const double JUMP_SPEED = 8.5;
   const double TERMINAL_FALL_SPEED = -50;
   const double TURN_SPEED = 2.5; // radians/sec
 

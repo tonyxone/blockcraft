@@ -14,6 +14,14 @@ bool boxCollides(World& world, double x, double y, double z, double halfWidth, d
   for (int by = minY; by <= maxY; by++) {
     for (int bz = minZ; bz <= maxZ; bz++) {
       for (int bx = minX; bx <= maxX; bx++) {
+        // An unloaded chunk has no real geometry yet — World::getBlock
+        // silently reports it as air — so treating it as passable let
+        // anything using gravity (animals, dropped items) wander to the
+        // edge of the loaded area and fall straight through into an
+        // undefined void below, sinking forever and vanishing for good with
+        // no death sequence (no blood, no corpse). Same "acts as a wall"
+        // treatment the world border above already gets.
+        if (!world.isChunkLoadedAt(bx, bz)) return true;
         uint8_t id = world.getBlock(bx, by, bz);
         // Stairs, slabs, fences, doors, trapdoors and campfires are all
         // solid but do not fill their cell: each collides as its own

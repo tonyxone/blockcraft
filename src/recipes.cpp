@@ -24,7 +24,7 @@ const Recipe CRAFT_RECIPES[] = {
     { "PP.", "PP.", ".S." }, { { 'P', ITEM_PLANKS }, { 'S', ITEM_STICK } } },
 
   { "Chest", ITEM_CHEST, 1, false,
-    { "PPP", "P.P", "PPP" }, { { 'P', ITEM_PLANKS } } },
+    { "PP.", "PP.", "..." }, { { 'P', ITEM_PLANKS } } },
 
   { "Furnace", ITEM_FURNACE, 1, false,
     { "CCC", "CKC", "CCC" }, { { 'C', BLOCK_STONE }, { 'K', BLOCK_COAL } } },
@@ -116,6 +116,12 @@ const Recipe CRAFT_RECIPES[] = {
     { "PP.", ".S.", ".S." }, { { 'P', ITEM_PLANKS }, { 'S', ITEM_STICK } } },
   { "Stone Hoe", ITEM_STONE_HOE, 1, false,
     { "CC.", ".S.", ".S." }, { { 'C', BLOCK_STONE }, { 'S', ITEM_STICK } } },
+
+  // --- vehicles ----------------------------------------------------------
+  // A full ring of planks framing the hull — more material than vanilla's
+  // own 5-plank shape, by request.
+  { "Boat", ITEM_BOAT, 1, false,
+    { "PPP", "P.P", "PPP" }, { { 'P', ITEM_PLANKS } } },
 };
 
 const int CRAFT_RECIPE_COUNT = (int)(sizeof(CRAFT_RECIPES) / sizeof(CRAFT_RECIPES[0]));
@@ -314,6 +320,7 @@ const char* craftItemName(uint8_t id) {
     case ITEM_STONE_SWORD: return "stone sword";
     case ITEM_WOOD_HOE: return "wooden hoe";
     case ITEM_STONE_HOE: return "stone hoe";
+    case ITEM_BOAT: return "boat";
     default: return "?";
   }
 }
@@ -353,6 +360,7 @@ int craftItemTile(uint8_t id) {
     case ITEM_STONE_SWORD: return TILE_STONE_SWORD;
     case ITEM_WOOD_HOE: return TILE_WOOD_HOE;
     case ITEM_STONE_HOE: return TILE_STONE_HOE;
+    case ITEM_BOAT: return TILE_BOAT;
     default: return TILE_NONE;
   }
 }

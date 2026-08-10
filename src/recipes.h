@@ -58,6 +58,11 @@ enum CraftItem : uint8_t {
   ITEM_STONE_SWORD,
   ITEM_WOOD_HOE,
   ITEM_STONE_HOE,
+  // --- vehicles ----------------------------------------------------------
+  // Not a CRAFT_BLOCKS entry: a boat has no cell in the world grid at all —
+  // placing one spawns a free-floating Boat (boat.h) directly on the water
+  // it's aimed at, rather than filling a block. See main.cpp's tryPlaceBoat.
+  ITEM_BOAT,
   CRAFT_ITEM_COUNT,
 };
 
