@@ -76,6 +76,7 @@ enum Tile : int {
   TILE_RAW_MEAT,
   TILE_COOKED_MEAT,
   TILE_BOAT,
+  TILE_SWORD, // hand-drawn (art\sword.png), not procedural — see textures.cpp
 
   // World textures for the crafted goods that can be placed. Separate from
   // the slot icons above: an icon is a small shape on a transparent field,

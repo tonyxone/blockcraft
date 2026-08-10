@@ -4162,6 +4162,61 @@ static int runSelftest() {
     }
   }
 
+  // Hand-drawn Sword: 3 stone + 1 stick (heavier than the standard Stone
+  // Sword's 2 stone, for +1 attack power), with its own art\sword.png icon
+  // instead of the procedural drawing every other tool gets.
+  {
+    uint8_t grid[9] = {};
+    grid[0] = BLOCK_STONE; grid[3] = BLOCK_STONE; grid[6] = BLOCK_STONE; grid[7] = ITEM_STICK;
+    const Recipe* hit = findRecipe(grid);
+    bool recipeOk = hit && hit->output == ITEM_SWORD && hit->outputCount == 1;
+
+    // findRecipeByCount is what the real crafting UI actually uses (see
+    // craftOutcome) — matches on totals regardless of layout, so it must
+    // agree the same 3 stone + 1 stick makes a Sword and nothing else does.
+    uint8_t items[9] = { BLOCK_STONE, ITEM_STICK };
+    int counts[9] = { 3, 1 };
+    const Recipe* byCount = findRecipeByCount(items, counts);
+    bool countOk = byCount && byCount->output == ITEM_SWORD;
+
+    bool powerOk = attackPower(ITEM_SWORD) == 3.0;
+    bool equippable = isToolItem(ITEM_SWORD);
+    const ToolVisual* sv = toolVisualFor(ITEM_SWORD);
+    bool sameHeldGeometryAsStoneSword =
+        sv && toolVisualFor(ITEM_STONE_SWORD) && sv->shape == toolVisualFor(ITEM_STONE_SWORD)->shape;
+
+    // The slot icon must actually be the supplied artwork, not a blank tile
+    // or a silent fallback to procedural art.
+    const GeneratedSprite* sprite = generatedSpriteNamed("sword");
+    bool artSupplied = sprite && sprite->rgba;
+    bool iconIsTheArt = false;
+    int tile = craftItemTile(ITEM_SWORD);
+    if (artSupplied && tile == TILE_SWORD) {
+      const Atlas& at = buildTextureAtlas();
+      iconIsTheArt = true;
+      // The atlas is GL-order (row 0 = bottom); the sprite is canvas-order
+      // (row 0 = top) — see TileCtx::putRGBA's flip in textures.cpp.
+      for (int y = 0; y < ATLAS_TILE_PX && iconIsTheArt; y++) {
+        int atlasRow = ATLAS_TILE_PX - 1 - y;
+        for (int x = 0; x < ATLAS_TILE_PX; x++) {
+          size_t ai = (size_t)(atlasRow * at.width + tile * ATLAS_TILE_PX + x) * 4;
+          size_t si = (size_t)(y * ATLAS_TILE_PX + x) * 4;
+          if (std::memcmp(&at.pixels[ai], &sprite->rgba[si], 4) != 0) iconIsTheArt = false;
+        }
+      }
+    }
+
+    bool ok = recipeOk && countOk && powerOk && equippable && sameHeldGeometryAsStoneSword &&
+              artSupplied && iconIsTheArt;
+    check(ok, "hand_drawn_sword_craft_item");
+    if (!ok) {
+      std::fprintf(f,
+                   "  (recipe=%d count=%d power=%d equip=%d heldGeom=%d art=%d icon=%d)\n",
+                   recipeOk, countOk, powerOk, equippable, sameHeldGeometryAsStoneSword, artSupplied,
+                   iconIsTheArt);
+    }
+  }
+
   // Craft-tab wiring, end to end through the real UI entry points: put wood
   // and stone in the grid, press the actual Craft button, and check a pickaxe
   // lands in the player's stuff and the ingredients were consumed. Driving

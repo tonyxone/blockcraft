@@ -63,6 +63,10 @@ enum CraftItem : uint8_t {
   // placing one spawns a free-floating Boat (boat.h) directly on the water
   // it's aimed at, rather than filling a block. See main.cpp's tryPlaceBoat.
   ITEM_BOAT,
+  // A one-off weapon with its own hand-drawn icon (art\sword.png) rather
+  // than a wood/stone tier of the pickaxe-style progression above — see
+  // TOOL_VISUALS in tools.cpp for the 3D geometry it's held with.
+  ITEM_SWORD,
   CRAFT_ITEM_COUNT,
 };
 
