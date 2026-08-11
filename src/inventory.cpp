@@ -251,11 +251,12 @@ void drawItemTooltip(int itemId, double mx, double my, int winW, int winH) {
 void clearSlot(Hotbar::Slot& s) { s.blockId = -1; s.count = 0; }
 bool occupied(const Hotbar::Slot& s) { return s.blockId >= 0 && s.count > 0; }
 
-// "Food" for the context menu's Use button means specifically cooked meat —
-// raw meat is a food ITEM (droppable, below) but isn't itself edible; only
-// cooked meat restores hunger anywhere else in the game (double-click,
+// "Food" for the context menu's Use button means anything isEatableFood
+// (recipes.h) accepts — cooked meat and every fruit — plus raw meat, which
+// is a food ITEM (droppable, below) but isn't itself edible; only the
+// isEatableFood set restores hunger anywhere else in the game (double-click,
 // drag-to-preview, right-click-in-world), so the menu matches that.
-bool isFoodItem(int id) { return id == ITEM_COOKED_MEAT || id == ITEM_RAW_MEAT; }
+bool isFoodItem(int id) { return isEatableFood((uint8_t)id) || id == ITEM_RAW_MEAT; }
 bool isDroppableItem(int id) { return id >= 0 && (isToolItem((uint8_t)id) || isFoodItem(id)); }
 
 // Context menu geometry: one button per row, Equip/Use on top (only for
@@ -714,7 +715,7 @@ void Inventory::drawContents(const Hotbar& hotbar, int winW, int winH,
   // Context menu, drawn last of all so it sits above the tooltip too — it
   // is effectively modal while open (see onMouseDown).
   if (contextMenuSlot) {
-    bool isFood = contextMenuSlot->blockId == ITEM_COOKED_MEAT;
+    bool isFood = isEatableFood((uint8_t)contextMenuSlot->blockId);
     bool isTool = isToolItem((uint8_t)contextMenuSlot->blockId);
     bool hasTopButton = isFood || isTool;
     double mnx, mny, mnw, mnh;
@@ -836,7 +837,7 @@ void Inventory::onMouseDown(Hotbar& hotbar, double mx, double my, bool rightButt
   if (contextMenuSlot) {
     Hotbar::Slot* menuSlot = contextMenuSlot;
     contextMenuSlot = nullptr;
-    bool isFood = menuSlot->blockId == ITEM_COOKED_MEAT;
+    bool isFood = isEatableFood((uint8_t)menuSlot->blockId);
     bool isTool = isToolItem((uint8_t)menuSlot->blockId);
     bool hasTopButton = isFood || isTool;
     double mnx, mny, mnw, mnh;
@@ -925,10 +926,10 @@ void Inventory::onMouseDown(Hotbar& hotbar, double mx, double my, bool rightButt
     lastClickSlot = nullptr; // a third click starts a fresh pair
     if (sendOneToCraft(craft, *target)) return;
   }
-  // Double-click a cooked meat stack anywhere OUTSIDE the Craft tab (so it
-  // can never collide with the shortcut just above) to eat one.
+  // Double-click a food stack anywhere OUTSIDE the Craft tab (so it can
+  // never collide with the shortcut just above) to eat one.
   if (doubleClick && tab != INV_TAB_CRAFT && !occupied(held) && occupied(*target) &&
-      target->blockId == ITEM_COOKED_MEAT) {
+      isEatableFood((uint8_t)target->blockId)) {
     lastClickSlot = nullptr;
     target->count--;
     if (target->count <= 0) clearSlot(*target);
@@ -993,12 +994,12 @@ void Inventory::onMouseUp(Hotbar& hotbar, double mx, double my, bool rightButton
   dragSrc = nullptr;
   if (!occupied(held)) return;
 
-  // Dragging cooked meat onto the Player-tab character preview eats the
-  // WHOLE held stack at once — a bigger gesture than the double-click (eats
-  // one) or right-click (eats one) shortcuts, matching "feed yourself" being
-  // a more deliberate action than a quick nibble.
+  // Dragging any food onto the Player-tab character preview eats the WHOLE
+  // held stack at once — a bigger gesture than the double-click (eats one)
+  // or right-click (eats one) shortcuts, matching "feed yourself" being a
+  // more deliberate action than a quick nibble.
   double px_, py_, pw_, ph_;
-  if (held.blockId == ITEM_COOKED_MEAT && previewRect(winW, winH, px_, py_, pw_, ph_) &&
+  if (isEatableFood((uint8_t)held.blockId) && previewRect(winW, winH, px_, py_, pw_, ph_) &&
       mx >= px_ && mx < px_ + pw_ && my >= py_ && my < py_ + ph_) {
     pendingEatAmount = held.count;
     clearSlot(held);

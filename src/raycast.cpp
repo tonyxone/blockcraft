@@ -16,7 +16,10 @@ enum RayCell { RAY_PASS, RAY_HIT, RAY_BLOCK };
 static RayCell classifySolid(uint8_t id) {
   // Panels are deliberately not solid — you walk through a ladder — but they
   // still have to be aim-able, or one could be placed and never mined back.
-  return (isSolid(id) || isPanel(id)) ? RAY_HIT : RAY_PASS;
+  // A flower is the same shape of exception: walk-through, but a real
+  // collectible (see isFlower, tryMine in main.cpp) that has to be aimable
+  // too, or it could never actually be picked despite being minable.
+  return (isSolid(id) || isPanel(id) || isFlower(id)) ? RAY_HIT : RAY_PASS;
 }
 
 static bool raycastClassify(World& world, const Vec3& origin, const Vec3& direction,

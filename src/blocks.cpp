@@ -16,6 +16,26 @@ const BlockDef BLOCKS[BLOCK_TYPE_COUNT] = {
   /* REDROCK */ { "redrock", true,  false, true,  TILE_REDROCK,   TILE_REDROCK,   TILE_REDROCK },
   /* GRASS PLANT */ { "tall grass", false, false, true, TILE_TALL_GRASS, TILE_TALL_GRASS, TILE_TALL_GRASS },
   /* COAL    */ { "coal",    true,  false, true,  TILE_COAL,      TILE_COAL,      TILE_COAL },
+  /* POPPY      */ { "poppy",      false, false, true, TILE_FLOWER_POPPY,      TILE_FLOWER_POPPY,      TILE_FLOWER_POPPY },
+  /* DANDELION  */ { "dandelion",  false, false, true, TILE_FLOWER_DANDELION,  TILE_FLOWER_DANDELION,  TILE_FLOWER_DANDELION },
+  /* DAISY      */ { "daisy",      false, false, true, TILE_FLOWER_DAISY,      TILE_FLOWER_DAISY,      TILE_FLOWER_DAISY },
+  /* CORNFLOWER */ { "cornflower", false, false, true, TILE_FLOWER_CORNFLOWER, TILE_FLOWER_CORNFLOWER, TILE_FLOWER_CORNFLOWER },
+  /* LEAVES+APPLE  */ { "leaves", true, false, true, TILE_LEAVES_APPLE,  TILE_LEAVES_APPLE,  TILE_LEAVES_APPLE },
+  /* LEAVES+PEACH  */ { "leaves", true, false, true, TILE_LEAVES_PEACH,  TILE_LEAVES_PEACH,  TILE_LEAVES_PEACH },
+  /* LEAVES+PEAR   */ { "leaves", true, false, true, TILE_LEAVES_PEAR,   TILE_LEAVES_PEAR,   TILE_LEAVES_PEAR },
+  /* LEAVES+CHERRY */ { "leaves", true, false, true, TILE_LEAVES_CHERRY, TILE_LEAVES_CHERRY, TILE_LEAVES_CHERRY },
+  /* LEAVES+ORANGE */ { "leaves", true, false, true, TILE_LEAVES_ORANGE, TILE_LEAVES_ORANGE, TILE_LEAVES_ORANGE },
+};
+
+const uint8_t FLOWER_BLOCKS[FLOWER_KIND_COUNT] = {
+  BLOCK_FLOWER_POPPY, BLOCK_FLOWER_DANDELION, BLOCK_FLOWER_DAISY, BLOCK_FLOWER_CORNFLOWER,
+};
+
+// Order matches ITEM_APPLE, ITEM_PEACH, ITEM_PEAR, ITEM_CHERRY, ITEM_ORANGE
+// (recipes.h).
+const uint8_t FRUIT_LEAF_BLOCKS[FRUIT_KIND_COUNT] = {
+  BLOCK_LEAVES_APPLE, BLOCK_LEAVES_PEACH, BLOCK_LEAVES_PEAR, BLOCK_LEAVES_CHERRY,
+  BLOCK_LEAVES_ORANGE,
 };
 
 // Crafted goods that can be placed in the world. A few (sandstone, packed
@@ -87,7 +107,26 @@ bool isWater(uint8_t id) {
 }
 
 bool isPlant(uint8_t id) {
-  return id == BLOCK_TALL_GRASS;
+  return id == BLOCK_TALL_GRASS || isFlower(id);
+}
+
+bool isFlower(uint8_t id) {
+  return id >= BLOCK_FLOWER_POPPY && id <= BLOCK_FLOWER_CORNFLOWER;
+}
+
+bool isFruitLeaves(uint8_t id) {
+  return id >= BLOCK_LEAVES_APPLE && id <= BLOCK_LEAVES_ORANGE;
+}
+
+int fruitItemForLeaves(uint8_t id) {
+  switch (id) {
+    case BLOCK_LEAVES_APPLE: return ITEM_APPLE;
+    case BLOCK_LEAVES_PEACH: return ITEM_PEACH;
+    case BLOCK_LEAVES_PEAR: return ITEM_PEAR;
+    case BLOCK_LEAVES_CHERRY: return ITEM_CHERRY;
+    case BLOCK_LEAVES_ORANGE: return ITEM_ORANGE;
+    default: return -1;
+  }
 }
 
 bool isChest(uint8_t id) { return id == ITEM_CHEST; }

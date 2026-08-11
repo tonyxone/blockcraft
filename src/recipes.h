@@ -67,6 +67,15 @@ enum CraftItem : uint8_t {
   // than a wood/stone tier of the pickaxe-style progression above — see
   // TOOL_VISUALS in tools.cpp for the 3D geometry it's held with.
   ITEM_SWORD,
+  // --- fruit ---------------------------------------------------------------
+  // Not CRAFT_RECIPES entries, same as the meats: these come from picking or
+  // mining a fruiting leaves block (blocks.h's isFruitLeaves/
+  // fruitItemForLeaves, harvested in main.cpp), never the crafting grid.
+  ITEM_APPLE,
+  ITEM_PEACH,
+  ITEM_PEAR,
+  ITEM_CHERRY,
+  ITEM_ORANGE,
   CRAFT_ITEM_COUNT,
 };
 
@@ -109,6 +118,12 @@ const Recipe* findRecipeByCount(const uint8_t items[9], const int counts[9],
 
 // Display name for any ingredient or crafted good.
 const char* craftItemName(uint8_t id);
+
+// True for any item that restores hunger just by eating it directly — cooked
+// meat and every fruit — the one gate shared by all three eat gestures
+// (right-click-selected, double-click, drag-to-preview) in main.cpp and
+// inventory.cpp, so a new food only needs adding here to work everywhere.
+bool isEatableFood(uint8_t id);
 
 // The distinct ingredients a recipe needs, with how many grid cells each
 // fills — "1 wood + 2 stone" rather than the raw 3x3 pattern. Written into

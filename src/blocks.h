@@ -16,7 +16,23 @@ enum Block : uint8_t {
   BLOCK_REDROCK = 11, // layered canyon rock (terracotta-like)
   BLOCK_TALL_GRASS = 12, // decorative plant: a cross of billboards, walk-through
   BLOCK_COAL = 13,       // black seams down in the stone; mine it, don't spawn with it
-  BLOCK_TYPE_COUNT = 14,
+  // Decorative flowers scattered on grass, same cross-of-billboards shape as
+  // tall grass (see isPlant) — different kinds, different colors, otherwise
+  // identical mechanics (walk-through, mined for nothing).
+  BLOCK_FLOWER_POPPY = 14,
+  BLOCK_FLOWER_DANDELION = 15,
+  BLOCK_FLOWER_DAISY = 16,
+  BLOCK_FLOWER_CORNFLOWER = 17,
+  // Ordinary leaves that happen to be carrying one fruit. A full solid cube
+  // like BLOCK_LEAVES (not a plant) — the fruit is baked into the face
+  // texture, not a separate object — so mining/meshing need no new cases,
+  // only the fruit-specific harvest paths in main.cpp (see isFruitLeaves).
+  BLOCK_LEAVES_APPLE = 18,
+  BLOCK_LEAVES_PEACH = 19,
+  BLOCK_LEAVES_PEAR = 20,
+  BLOCK_LEAVES_CHERRY = 21,
+  BLOCK_LEAVES_ORANGE = 22,
+  BLOCK_TYPE_COUNT = 23,
 };
 
 // Atlas tile ids; order matches the tile-drawer order in textures.cpp.
@@ -37,6 +53,15 @@ enum Tile : int {
   TILE_REDROCK,
   TILE_TALL_GRASS,
   TILE_COAL,
+  TILE_FLOWER_POPPY,
+  TILE_FLOWER_DANDELION,
+  TILE_FLOWER_DAISY,
+  TILE_FLOWER_CORNFLOWER,
+  TILE_LEAVES_APPLE,
+  TILE_LEAVES_PEACH,
+  TILE_LEAVES_PEAR,
+  TILE_LEAVES_CHERRY,
+  TILE_LEAVES_ORANGE,
 
   // Everything from here on is a flat ITEM sprite rather than a block face:
   // crafted goods have no cube in the world but still need an icon for the
@@ -77,6 +102,11 @@ enum Tile : int {
   TILE_COOKED_MEAT,
   TILE_BOAT,
   TILE_SWORD, // hand-drawn (art\sword.png), not procedural — see textures.cpp
+  TILE_APPLE,
+  TILE_PEACH,
+  TILE_PEAR,
+  TILE_CHERRY,
+  TILE_ORANGE,
 
   // World textures for the crafted goods that can be placed. Separate from
   // the slot icons above: an icon is a small shape on a transparent field,
@@ -150,8 +180,33 @@ bool isPanel(uint8_t id);
 bool isStairs(uint8_t id);
 
 // Plants are drawn as crossed billboards rather than cubes, and never block
-// a neighbouring block's face.
+// a neighbouring block's face. Covers both tall grass and every flower kind.
 bool isPlant(uint8_t id);
+
+// The 4 flower kinds worldgen scatters on grass, for it to pick from.
+const int FLOWER_KIND_COUNT = 4;
+extern const uint8_t FLOWER_BLOCKS[FLOWER_KIND_COUNT];
+
+// True for any of the 4 flower kinds specifically — unlike tall grass (also
+// isPlant, but mined for nothing per Minecraft convention), a flower is a
+// real collectible: mining one gives the flower itself back (see tryMine,
+// main.cpp).
+bool isFlower(uint8_t id);
+
+// The 5 fruit-bearing leaves variants, in the same order as the CraftItem
+// fruits they yield (see fruitItemForLeaves) — for worldgen to pick a kind
+// when a tree is rolled to bear fruit.
+const int FRUIT_KIND_COUNT = 5;
+extern const uint8_t FRUIT_LEAF_BLOCKS[FRUIT_KIND_COUNT];
+
+// True for a leaves block currently carrying a fruit (BLOCK_LEAVES_APPLE..
+// BLOCK_LEAVES_ORANGE).
+bool isFruitLeaves(uint8_t id);
+
+// The CraftItem (recipes.h) a fruiting-leaves block yields when its fruit is
+// picked, or -1 if `id` isn't one. Returned as int (not uint8_t) so -1 is a
+// real out-of-band value rather than wrapping to 255.
+int fruitItemForLeaves(uint8_t id);
 
 // A chest: a squat box with a lid that opens (see ChestState in chest.h). The
 // mesher bakes only the static body; the lid is drawn separately each frame
