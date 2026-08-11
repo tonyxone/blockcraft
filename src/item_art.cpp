@@ -36,6 +36,18 @@ const uint32_t MEAT_COOK_DK = 0x6e3c1f, MEAT_COOK_DK_D = 0x4a2812;
 const uint32_t BONE = 0xe8e0c0, BONE_D = 0xbfb58f;
 const uint32_t BONE_HI = 0xfbf6e4, BONE_HI_D = 0xd8d0b4;
 const uint32_t GRILL = 0x3a2414, GRILL_D = 0x241608;
+const uint32_t APPLE_RED = 0xd42a2a, APPLE_RED_D = 0x9c1c1c;
+const uint32_t APPLE_HI = 0xf0524a, APPLE_HI_D = 0xc23a34;
+const uint32_t LEAF_GREEN = 0x4f9c2a, LEAF_GREEN_D = 0x3a7a1e;
+const uint32_t PEACH_BASE = 0xf5a15c, PEACH_BASE_D = 0xc9793a;
+const uint32_t PEACH_HI = 0xffc98a, PEACH_HI_D = 0xf0a15c;
+const uint32_t PEACH_CREASE = 0xb8641e, PEACH_CREASE_D = 0x8f4a12;
+const uint32_t PEAR_BASE = 0xc8d24a, PEAR_BASE_D = 0xa0ab2e;
+const uint32_t PEAR_HI = 0xe0ea6e, PEAR_HI_D = 0xb8c34a;
+const uint32_t CHERRY_RED = 0xb81c3a, CHERRY_RED_D = 0x821229;
+const uint32_t CHERRY_HI = 0xe04060, CHERRY_HI_D = 0xb02a48;
+const uint32_t ORANGE_BASE = 0xf5921e, ORANGE_BASE_D = 0xc9720f;
+const uint32_t ORANGE_HI = 0xffb84f, ORANGE_HI_D = 0xe89a35;
 
 // --- tool shapes -----------------------------------------------------------
 // 'H' head / business end, 'S' shaft. Shared between material tiers: a wooden
@@ -520,6 +532,119 @@ const char* const DRUMSTICK_ROWS[TILE_PX] = {
   "................",
 };
 
+// A true round body (radius profile, not a hand-tapered diamond) with a
+// short top stem and a leaf beside it — the familiar apple silhouette
+// (minecraft.wiki): a near-circle, flattened slightly at the very top where
+// the stem sits, rounding off (not pointing) at the bottom.
+const char* const APPLE_ROWS[TILE_PX] = {
+  ".......S........",
+  ".......S.LL.....",
+  ".......S........",
+  ".......S........",
+  ".....HHMMDD.....",
+  "....HHMMMMDD....",
+  "...HHMMMMMMDD...",
+  "..HHMMMMMMMMDD..",
+  "..HHMMMMMMMMDD..",
+  "..HHMMMMMMMMDD..",
+  "..HHMMMMMMMMDD..",
+  "...HHMMMMMMDD...",
+  "...HHMMMMMMDD...",
+  "....HHMMMMDD....",
+  ".....HHMMDD.....",
+  "................",
+};
+
+// Same round body as the apple, but its own rows: no leaf, and a center
+// crease (the characteristic cleft running pole to pole — minecraft.wiki
+// describes it as the feature that most separates a peach from a plain
+// round fruit) instead.
+const char* const PEACH_ROWS[TILE_PX] = {
+  ".......S........",
+  ".......S........",
+  ".......S........",
+  ".......S........",
+  ".....HHCMDD.....",
+  "....HHMCMMDD....",
+  "...HHMMCMMMDD...",
+  "..HHMMMCMMMMDD..",
+  "..HHMMMCMMMMDD..",
+  "..HHMMMCMMMMDD..",
+  "..HHMMMCMMMMDD..",
+  "...HHMMCMMMDD...",
+  "...HHMMCMMMDD...",
+  "....HHMCMMDD....",
+  ".....HHCMDD.....",
+  "................",
+};
+
+// Bottom-heavy with a long, narrow neck under the stem and a ROUNDED bulb
+// at the bottom (not tapered to a point) — the asymmetric silhouette
+// (minecraft.wiki) that reads as "pear" instead of a lopsided apple.
+const char* const PEAR_ROWS[TILE_PX] = {
+  ".......S........",
+  ".......HD.......",
+  "......HMMD......",
+  "......HMMD......",
+  ".....HHMMDD.....",
+  "....HHMMMMDD....",
+  "...HHMMMMMMDD...",
+  "..HHMMMMMMMMDD..",
+  ".HHMMMMMMMMMMDD.",
+  ".HHMMMMMMMMMMDD.",
+  ".HHMMMMMMMMMMDD.",
+  "..HHMMMMMMMMDD..",
+  "...HHMMMMMMDD...",
+  "....HHMMMMDD....",
+  "......HMMD......",
+  "................",
+};
+
+// Same round body as the apple again, but with no leaf and a small dark
+// navel dimple at the bottom instead — the citrus "blossom end" mark that
+// tells it apart from the apple at a glance despite the near-identical
+// silhouette (real apples and oranges are both close to spherical).
+const char* const ORANGE_ROWS[TILE_PX] = {
+  ".......S........",
+  ".......S........",
+  ".......S........",
+  ".......S........",
+  ".....HHMMDD.....",
+  "....HHMMMMDD....",
+  "...HHMMMMMMDD...",
+  "..HHMMMMMMMMDD..",
+  "..HHMMMMMMMMDD..",
+  "..HHMMMMMMMMDD..",
+  "..HHMMMMMMMMDD..",
+  "...HHMMMMMMDD...",
+  "...HHMMMMMMDD...",
+  "....HHMMMMDD....",
+  ".....HHNMDD.....",
+  "................",
+};
+
+// Two small round fruit joined by a pair of stems meeting at one point —
+// the paired-cherry silhouette every cherry icon uses to read as "cherry"
+// rather than a single generic red fruit.
+const char* const CHERRY_ROWS[TILE_PX] = {
+  ".......SS.......",
+  "......S..SLL....",
+  ".....S....S.....",
+  ".....S....S.....",
+  "....S......S....",
+  "....S......S....",
+  "...S........S...",
+  "...S........S...",
+  "..MMM......MMM..",
+  ".MMMMM....MMMMM.",
+  "MMMMMMM..MMMMMMM",
+  "MHMMMDM..MHMMMDM",
+  "MMMMMMD..MMMMMMD",
+  ".MMMMD....MMMMD.",
+  "..MMM......MMM..",
+  "................",
+};
+
 // --- world textures for placed crafted blocks ------------------------------
 // These cover the WHOLE tile: a block face with holes in it would show the
 // world through itself. (The outline pass only fires on transparent pixels
@@ -722,6 +847,31 @@ const ItemArt ART_BOAT = {
   BOAT_ROWS, { { 'M', WOOD, WOOD_D }, { 'D', DARKWOOD, DARKWOOD_D }, { 'R', WOOD, WOOD_D } }
 };
 
+const ItemArt ART_APPLE = {
+  APPLE_ROWS, { { 'H', APPLE_HI, APPLE_HI_D }, { 'M', APPLE_RED, APPLE_RED_D },
+               { 'D', APPLE_RED_D, 0x6e1414 }, { 'S', DARKWOOD, DARKWOOD_D },
+               { 'L', LEAF_GREEN, LEAF_GREEN_D } }
+};
+const ItemArt ART_PEACH = {
+  PEACH_ROWS, { { 'H', PEACH_HI, PEACH_HI_D }, { 'M', PEACH_BASE, PEACH_BASE_D },
+               { 'D', PEACH_BASE_D, 0x8f5222 }, { 'S', DARKWOOD, DARKWOOD_D },
+               { 'C', PEACH_CREASE, PEACH_CREASE_D } }
+};
+const ItemArt ART_PEAR = {
+  PEAR_ROWS, { { 'H', PEAR_HI, PEAR_HI_D }, { 'M', PEAR_BASE, PEAR_BASE_D },
+              { 'D', PEAR_BASE_D, 0x767f1e }, { 'S', DARKWOOD, DARKWOOD_D } }
+};
+const ItemArt ART_ORANGE = {
+  ORANGE_ROWS, { { 'H', ORANGE_HI, ORANGE_HI_D }, { 'M', ORANGE_BASE, ORANGE_BASE_D },
+                { 'D', ORANGE_BASE_D, 0x8f5709 }, { 'S', DARKWOOD, DARKWOOD_D },
+                { 'N', DARKWOOD_D, 0x241505 } }
+};
+const ItemArt ART_CHERRY = {
+  CHERRY_ROWS, { { 'H', CHERRY_HI, CHERRY_HI_D }, { 'M', CHERRY_RED, CHERRY_RED_D },
+                { 'D', CHERRY_RED_D, 0x5c0d1c }, { 'S', DARKWOOD, DARKWOOD_D },
+                { 'L', LEAF_GREEN, LEAF_GREEN_D } }
+};
+
 // World textures for the placed blocks.
 const ItemArt BLK_PLANKS = { BLK_PLANKS_ROWS, { { 'M', WOOD, WOOD_D }, { 'D', DARKWOOD, DARKWOOD_D } } };
 const ItemArt BLK_BRICKS = { BLK_BRICKS_ROWS, { { 'M', STONE, STONE_D }, { 'D', 0x6f6f73, 0x4f4f53 } } };
@@ -796,6 +946,11 @@ const ItemArt* itemArtForTile(int tile) {
     case TILE_RAW_MEAT: return &ART_RAW_MEAT;
     case TILE_COOKED_MEAT: return &ART_COOKED_MEAT;
     case TILE_BOAT: return &ART_BOAT;
+    case TILE_APPLE: return &ART_APPLE;
+    case TILE_PEACH: return &ART_PEACH;
+    case TILE_PEAR: return &ART_PEAR;
+    case TILE_CHERRY: return &ART_CHERRY;
+    case TILE_ORANGE: return &ART_ORANGE;
     case TILE_WOOD_PICKAXE: return &ART_WOOD_PICKAXE;
     case TILE_STONE_PICKAXE: return &ART_STONE_PICKAXE;
     case TILE_WOOD_AXE: return &ART_WOOD_AXE;

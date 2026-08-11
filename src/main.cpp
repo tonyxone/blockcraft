@@ -529,12 +529,12 @@ static void applyPendingEat() {
   g_inventory->pendingEatAmount = 0;
 }
 
-// The third eat gesture: right-click while cooked meat is selected in the
-// hotbar. Checked ahead of tryPlace()'s normal build logic, since meat
-// isn't placeable anyway and eating shouldn't need a valid block target the
-// way building does (you can eat looking at open sky).
+// The third eat gesture: right-click while cooked meat or a fruit is
+// selected in the hotbar. Checked ahead of tryPlace()'s normal build logic,
+// since none of these are placeable anyway and eating shouldn't need a valid
+// block target the way building does (you can eat looking at open sky).
 static bool tryEatSelected() {
-  if (!g_hotbar || !g_player || g_hotbar->selectedBlockId() != ITEM_COOKED_MEAT) return false;
+  if (!g_hotbar || !g_player || !isEatableFood((uint8_t)g_hotbar->selectedBlockId())) return false;
   if (g_player->hunger >= g_player->maxHunger) return false;
   Hotbar::Slot& slot = g_hotbar->slots[g_hotbar->selected];
   slot.count--;
@@ -859,6 +859,25 @@ static void tryMine() {
     return;
   }
 
+  if (isFlower(id)) {
+    // Right-click takes the flower AND the grass it grew on, in one swing —
+    // "collect both" per the request, as opposed to E's pickFlower below,
+    // which takes only the flower and leaves the ground intact.
+    int fx = hit.pos[0], fy = hit.pos[1], fz = hit.pos[2];
+    std::vector<Chunk*> affected = g_world->setBlock(fx, fy, fz, BLOCK_AIR);
+    g_inventory->collect(*g_hotbar, id, 1);
+    if (g_world->getBlock(fx, fy - 1, fz) == BLOCK_GRASS) {
+      for (Chunk* c : g_world->setBlock(fx, fy - 1, fz, BLOCK_AIR)) affected.push_back(c);
+      g_inventory->collect(*g_hotbar, BLOCK_DIRT, 1);
+    }
+    for (Chunk* c : g_world->flowWaterInto(fx, fy - 1, fz, WATER_FILL_MAX_CELLS)) {
+      affected.push_back(c);
+    }
+    remeshAll(affected);
+    playMineSound();
+    return;
+  }
+
   if (isStairs(id)) g_world->stairFacings.erase({ hit.pos[0], hit.pos[1], hit.pos[2] });
   if (isFurnace(id)) g_world->furnaces.erase({ hit.pos[0], hit.pos[1], hit.pos[2] });
   std::vector<Chunk*> affected = g_world->setBlock(hit.pos[0], hit.pos[1], hit.pos[2], BLOCK_AIR);
@@ -874,10 +893,43 @@ static void tryMine() {
     affected.push_back(c);
   }
   remeshAll(affected);
-  // Neither grass variant is collectible: grass blocks drop dirt (like
-  // Minecraft), tall grass plants drop nothing.
-  if (id == BLOCK_GRASS) g_inventory->collect(*g_hotbar, BLOCK_DIRT, 1);
-  else if (!isPlant(id)) g_inventory->collect(*g_hotbar, id, 1);
+  // Grass blocks drop dirt (like Minecraft); tall grass plants drop nothing.
+  // Flowers are handled above (their own early-return branch, since a flower
+  // takes the grass below with it too) and never reach here. Fruiting leaves
+  // are a mining shortcut for BOTH at once — leaves plus the fruit it was
+  // carrying — rather than the fruiting-leaves id itself, which isn't a real
+  // item (see isFruitLeaves/fruitItemForLeaves, blocks.h). E instead picks
+  // just the fruit and leaves the leaves in place (see pickFruitFromLeaves
+  // below).
+  if (id == BLOCK_GRASS) {
+    g_inventory->collect(*g_hotbar, BLOCK_DIRT, 1);
+  } else if (isFruitLeaves(id)) {
+    g_inventory->collect(*g_hotbar, BLOCK_LEAVES, 1);
+    g_inventory->collect(*g_hotbar, (uint8_t)fruitItemForLeaves(id), 1);
+  } else if (!isPlant(id)) {
+    g_inventory->collect(*g_hotbar, id, 1);
+  }
+  playMineSound();
+}
+
+// E on a fruiting leaves block: takes just the fruit, leaving an ordinary
+// BLOCK_LEAVES behind — the "without collecting the tree" half of the
+// request, as opposed to tryMine's right-click which takes both.
+static void pickFruitFromLeaves(int x, int y, int z, uint8_t id) {
+  int fruit = fruitItemForLeaves(id);
+  if (fruit < 0 || !g_world || !g_inventory) return;
+  remeshAll(g_world->setBlock(x, y, z, BLOCK_LEAVES));
+  g_inventory->collect(*g_hotbar, (uint8_t)fruit, 1);
+  playMineSound();
+}
+
+// E on a flower: takes just the flower, leaving the grass it grew on intact
+// — the "without collecting the block" half of the request, as opposed to
+// tryMine's right-click, which takes both.
+static void pickFlower(int x, int y, int z, uint8_t id) {
+  if (!g_world || !g_inventory) return;
+  remeshAll(g_world->setBlock(x, y, z, BLOCK_AIR));
+  g_inventory->collect(*g_hotbar, id, 1);
   playMineSound();
 }
 
@@ -1321,6 +1373,10 @@ static void drawInteractPrompt() {
         auto it = g_world->doors.find({ hx, dy, hz });
         label = (it != g_world->doors.end() && it->second.open) ? "Press E to close"
                                                                   : "Press E to open";
+      } else if (isFruitLeaves(id)) {
+        label = "Press E to pick fruit";
+      } else if (isFlower(id)) {
+        label = "Press E to pick flower";
       }
     }
   }
@@ -1950,6 +2006,10 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
               toggleFurnace(hit.pos[0], hit.pos[1], hit.pos[2]);
             } else if (isDoor(id)) {
               toggleDoor(hit.pos[0], hit.pos[1], hit.pos[2]);
+            } else if (isFruitLeaves(id)) {
+              pickFruitFromLeaves(hit.pos[0], hit.pos[1], hit.pos[2], id);
+            } else if (isFlower(id)) {
+              pickFlower(hit.pos[0], hit.pos[1], hit.pos[2], id);
             }
           }
         }
@@ -2894,6 +2954,142 @@ static int runWaterTest() {
     if (!(g_player->position.y < 44.1 && g_player->position.z > 33.0)) {
       std::fprintf(f, "  (y=%.2f z=%.2f)\n", g_player->position.y, g_player->position.z);
     }
+  }
+
+  // Fruit harvest, through the real E-key and left-click paths: E takes just
+  // the fruit and leaves the leaves behind, mining takes both at once.
+  {
+    auto countItem = [&](int item) {
+      int n = 0;
+      for (int i = 0; i < SLOT_COUNT; i++) {
+        if (g_hotbar->slots[i].blockId == item) n += g_hotbar->slots[i].count;
+      }
+      for (int i = 0; i < INV_MAIN_COUNT; i++) {
+        if (g_inventory->main[i].blockId == item) n += g_inventory->main[i].count;
+      }
+      return n;
+    };
+
+    // Clear a small platform first, same as every other in-world test above
+    // — natural terrain at these coordinates would otherwise be free to
+    // stick a stray block into the ray's path.
+    for (int bx = 68; bx <= 73; bx++) {
+      for (int bz = 68; bz <= 73; bz++) {
+        g_world->setBlock(bx, 43, bz, BLOCK_STONE);
+        g_world->setBlock(bx, 44, bz, BLOCK_AIR);
+        g_world->setBlock(bx, 45, bz, BLOCK_AIR);
+      }
+    }
+
+    g_world->setBlock(70, 44, 70, BLOCK_LEAVES_APPLE);
+    int applesBefore = countItem(ITEM_APPLE);
+    g_player->position = Vec3(69.5, 44.0, 70.5);
+    lookAt(70.2, 44.0, 70.5);
+    pickFruitFromLeaves(70, 44, 70, (uint8_t)g_world->getBlock(70, 44, 70));
+    bool leavesStayed = g_world->getBlock(70, 44, 70) == BLOCK_LEAVES;
+    bool gotOneApple = countItem(ITEM_APPLE) == applesBefore + 1;
+    check(leavesStayed && gotOneApple, "fruit_pick_leaves_intact");
+    if (!(leavesStayed && gotOneApple)) {
+      std::fprintf(f, "  (block=%d apples=%d)\n", g_world->getBlock(70, 44, 70),
+                   countItem(ITEM_APPLE));
+    }
+
+    // Well clear of the cell above (different chunk region entirely), so the
+    // ray can't graze the leftover BLOCK_LEAVES from the pick test first.
+    g_world->setBlock(72, 44, 72, BLOCK_LEAVES_PEACH);
+    int peachesBefore = countItem(ITEM_PEACH);
+    int leavesBefore = countItem(BLOCK_LEAVES);
+    g_player->position = Vec3(71.5, 44.0, 72.5);
+    lookAt(72.2, 44.0, 72.5);
+    tryMine();
+    bool cellCleared = g_world->getBlock(72, 44, 72) == BLOCK_AIR;
+    bool gotBoth = countItem(ITEM_PEACH) == peachesBefore + 1 &&
+                  countItem(BLOCK_LEAVES) == leavesBefore + 1;
+    check(cellCleared && gotBoth, "fruit_mine_takes_leaves_and_fruit");
+    if (!(cellCleared && gotBoth)) {
+      std::fprintf(f, "  (block=%d peaches=%d leaves=%d)\n", g_world->getBlock(72, 44, 72),
+                   countItem(ITEM_PEACH), countItem(BLOCK_LEAVES));
+    }
+
+    // Eating any fruit restores hunger the same way cooked meat does.
+    g_player->hunger = g_player->maxHunger - 3;
+    g_hotbar->slots[8] = { ITEM_APPLE, 2 };
+    g_hotbar->select(8);
+    bool ate = tryEatSelected();
+    check(ate && g_player->hunger == g_player->maxHunger - 2 && g_hotbar->slots[8].count == 1,
+          "fruit_eat_restores_hunger");
+  }
+
+  // Flowers are a real collectible (unlike tall grass, which still drops
+  // nothing) — mining one gives back the flower itself.
+  {
+    auto countItem = [&](int item) {
+      int n = 0;
+      for (int i = 0; i < SLOT_COUNT; i++) {
+        if (g_hotbar->slots[i].blockId == item) n += g_hotbar->slots[i].count;
+      }
+      for (int i = 0; i < INV_MAIN_COUNT; i++) {
+        if (g_inventory->main[i].blockId == item) n += g_inventory->main[i].count;
+      }
+      return n;
+    };
+
+    // x/z kept well inside the default render distance (RENDER_DISTANCE=4
+    // chunks around spawn) — the earlier fruit-tree tests' x=68-73 sits right
+    // at that boundary's edge, and this block originally reused numbers just
+    // past it, landing in an unloaded chunk where setBlock silently no-ops.
+    for (int bx = 50; bx <= 54; bx++) {
+      for (int bz = 50; bz <= 54; bz++) {
+        g_world->setBlock(bx, 43, bz, BLOCK_GRASS);
+        g_world->setBlock(bx, 44, bz, BLOCK_AIR);
+        g_world->setBlock(bx, 45, bz, BLOCK_AIR);
+      }
+    }
+
+    // E takes just the flower, leaving the grass it grew on intact.
+    g_world->setBlock(52, 44, 52, BLOCK_FLOWER_POPPY);
+    int poppiesBefore = countItem(BLOCK_FLOWER_POPPY);
+    g_player->position = Vec3(51.5, 44.0, 52.5);
+    lookAt(52.2, 44.0, 52.5);
+    pickFlower(52, 44, 52, (uint8_t)g_world->getBlock(52, 44, 52));
+    bool grassStayed = g_world->getBlock(52, 44, 52) == BLOCK_AIR &&
+                       g_world->getBlock(52, 43, 52) == BLOCK_GRASS;
+    bool gotOnePoppy = countItem(BLOCK_FLOWER_POPPY) == poppiesBefore + 1;
+    check(grassStayed && gotOnePoppy, "flower_pick_leaves_grass");
+    if (!(grassStayed && gotOnePoppy)) {
+      std::fprintf(f, "  (flowerCell=%d grassCell=%d poppies=%d)\n",
+                   g_world->getBlock(52, 44, 52), g_world->getBlock(52, 43, 52),
+                   countItem(BLOCK_FLOWER_POPPY));
+    }
+
+    // Right-click takes both the flower and the grass block beneath it.
+    g_world->setBlock(53, 44, 53, BLOCK_FLOWER_DANDELION);
+    int dandelionsBefore = countItem(BLOCK_FLOWER_DANDELION);
+    int dirtBefore = countItem(BLOCK_DIRT);
+    g_player->position = Vec3(52.5, 44.0, 53.5);
+    lookAt(53.2, 44.0, 53.5);
+    tryMine();
+    bool bothCellsCleared = g_world->getBlock(53, 44, 53) == BLOCK_AIR &&
+                            g_world->getBlock(53, 43, 53) == BLOCK_AIR;
+    bool gotBoth = countItem(BLOCK_FLOWER_DANDELION) == dandelionsBefore + 1 &&
+                  countItem(BLOCK_DIRT) == dirtBefore + 1;
+    check(bothCellsCleared && gotBoth, "flower_mine_takes_grass_and_flower");
+    if (!(bothCellsCleared && gotBoth)) {
+      std::fprintf(f, "  (flowerCell=%d grassCell=%d dandelions=%d dirt=%d)\n",
+                   g_world->getBlock(53, 44, 53), g_world->getBlock(53, 43, 53),
+                   countItem(BLOCK_FLOWER_DANDELION), countItem(BLOCK_DIRT));
+    }
+
+    // Regression: tall grass must still drop nothing, per Minecraft
+    // convention — only flowers gained a drop, not every plant.
+    g_world->setBlock(54, 44, 53, BLOCK_TALL_GRASS);
+    int tallGrassBefore = countItem(BLOCK_TALL_GRASS);
+    g_player->position = Vec3(53.5, 44.0, 53.5);
+    lookAt(54.2, 44.0, 53.5);
+    tryMine();
+    bool tallGrassDropsNothing = g_world->getBlock(54, 44, 53) == BLOCK_AIR &&
+                                countItem(BLOCK_TALL_GRASS) == tallGrassBefore;
+    check(tallGrassDropsNothing, "tall_grass_still_drops_nothing");
   }
 
   std::fprintf(f, "%s\n", failures == 0 ? "ALL_PASS" : "HAS_FAILURES");
@@ -4030,6 +4226,89 @@ static int runSelftest() {
     }
   }
 
+  // Flowers: scattered on grass like tall grass but sparser, several kinds,
+  // never blocking movement, and always rooted on an actual grass block.
+  {
+    int flowerCount = 0, wrongHost = 0;
+    bool kindSeen[FLOWER_KIND_COUNT] = {};
+    for (int ccx = -6; ccx <= 6; ccx++) {
+      for (int ccz = -6; ccz <= 6; ccz++) {
+        auto ch = generateChunk(ccx, ccz);
+        for (int lz = 0; lz < CHUNK_SIZE; lz++) {
+          for (int lx = 0; lx < CHUNK_SIZE; lx++) {
+            for (int y = 1; y < CHUNK_HEIGHT - 1; y++) {
+              uint8_t here = ch->getLocal(lx, y, lz);
+              if (!isPlant(here) || here == BLOCK_TALL_GRASS) continue;
+              flowerCount++;
+              if (ch->getLocal(lx, y - 1, lz) != BLOCK_GRASS) wrongHost++;
+              for (int k = 0; k < FLOWER_KIND_COUNT; k++) {
+                if (here == FLOWER_BLOCKS[k]) kindSeen[k] = true;
+              }
+            }
+          }
+        }
+      }
+    }
+    bool allKinds = true;
+    for (int k = 0; k < FLOWER_KIND_COUNT; k++) allKinds = allKinds && kindSeen[k];
+    check(flowerCount > 20 && wrongHost == 0 && allKinds, "flowers_present_and_varied");
+    if (!(flowerCount > 20 && wrongHost == 0 && allKinds)) {
+      std::fprintf(f, "  (flowers=%d wrongHost=%d kinds=%d,%d,%d,%d)\n", flowerCount, wrongHost,
+                   kindSeen[0], kindSeen[1], kindSeen[2], kindSeen[3]);
+    }
+  }
+
+  // Fruit trees: some grass-biome trees bear one of the 4 fruits across
+  // their whole canopy, every fruiting-leaves cell still borders the rest of
+  // that tree's ordinary leaves/trunk (never floating alone), and no snow
+  // tree ever bears fruit.
+  {
+    int fruitCells = 0, snowFruitCells = 0, isolatedFruitCells = 0;
+    bool kindSeen[FRUIT_KIND_COUNT] = {};
+    for (int ccx = -6; ccx <= 6; ccx++) {
+      for (int ccz = -6; ccz <= 6; ccz++) {
+        auto ch = generateChunk(ccx, ccz);
+        for (int lz = 0; lz < CHUNK_SIZE; lz++) {
+          for (int lx = 0; lx < CHUNK_SIZE; lx++) {
+            for (int y = 1; y < CHUNK_HEIGHT - 1; y++) {
+              uint8_t here = ch->getLocal(lx, y, lz);
+              if (!isFruitLeaves(here)) continue;
+              fruitCells++;
+              for (int k = 0; k < FRUIT_KIND_COUNT; k++) {
+                if (here == FRUIT_LEAF_BLOCKS[k]) kindSeen[k] = true;
+              }
+              int biome, surfaceY;
+              columnInfoAt(ccx * CHUNK_SIZE + lx, ccz * CHUNK_SIZE + lz, biome, surfaceY);
+              if (biome == 3) snowFruitCells++; // 3 = snow (worldgen.cpp's Biome enum order)
+              bool neighborTree = false;
+              const int OFF[6][3] = { { 1, 0, 0 }, { -1, 0, 0 }, { 0, 1, 0 },
+                                      { 0, -1, 0 }, { 0, 0, 1 }, { 0, 0, -1 } };
+              for (const auto& o : OFF) {
+                int nx = lx + o[0], ny = y + o[1], nz = lz + o[2];
+                if (nx < 0 || nx >= CHUNK_SIZE || nz < 0 || nz >= CHUNK_SIZE ||
+                    ny < 0 || ny >= CHUNK_HEIGHT) {
+                  continue;
+                }
+                uint8_t n = ch->getLocal(nx, ny, nz);
+                if (n == BLOCK_LEAVES || isFruitLeaves(n) || n == BLOCK_WOOD) neighborTree = true;
+              }
+              if (!neighborTree) isolatedFruitCells++;
+            }
+          }
+        }
+      }
+    }
+    bool allKinds = true;
+    for (int k = 0; k < FRUIT_KIND_COUNT; k++) allKinds = allKinds && kindSeen[k];
+    check(fruitCells > 20 && snowFruitCells == 0 && isolatedFruitCells == 0 && allKinds,
+          "fruit_trees_present_and_varied");
+    if (!(fruitCells > 20 && snowFruitCells == 0 && isolatedFruitCells == 0 && allKinds)) {
+      std::fprintf(f, "  (fruitCells=%d snowFruit=%d isolated=%d kinds=%d,%d,%d,%d,%d)\n", fruitCells,
+                   snowFruitCells, isolatedFruitCells, kindSeen[0], kindSeen[1], kindSeen[2],
+                   kindSeen[3], kindSeen[4]);
+    }
+  }
+
   // Coal: black seams buried in the stone. Three separate promises — it is
   // there at all, it never appears within COAL_MIN_DEPTH of the surface (so
   // you must dig for it), and it fills roughly a fifth of the underground.
@@ -5109,11 +5388,14 @@ static int runSelftest() {
   // the whole tile, and that is not an error.
   const Atlas& atlas = buildTextureAtlas();
   bool atlasOk = atlas.width == ATLAS_TILE_PX * TILE_COUNT && atlas.height == ATLAS_TILE_PX;
-  // Derived, not listed: every item tile is a sprite, plus the tall-grass
-  // billboard. A hand-maintained list would have to be extended for each new
-  // item and would silently stop covering the ones nobody remembered.
+  // Derived, not listed: every item tile is a sprite, plus every billboard
+  // plant (tall grass and the 4 flower kinds — see isPlant, blocks.h). A
+  // hand-maintained list would have to be extended for each new item/plant
+  // and would silently stop covering the ones nobody remembered.
   auto isSprite = [&](int tile) {
-    return tile == TILE_TALL_GRASS || tile >= TILE_FIRST_ITEM;
+    return tile == TILE_TALL_GRASS ||
+           (tile >= TILE_FLOWER_POPPY && tile <= TILE_FLOWER_CORNFLOWER) ||
+           tile >= TILE_FIRST_ITEM;
   };
   int spriteClear[TILE_COUNT] = {}, spriteSolid[TILE_COUNT] = {};
   for (size_t i = 3; i < atlas.pixels.size(); i += 4) {

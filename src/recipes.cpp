@@ -328,7 +328,26 @@ const char* craftItemName(uint8_t id) {
     case ITEM_STONE_HOE: return "stone hoe";
     case ITEM_BOAT: return "boat";
     case ITEM_SWORD: return "the first sword";
+    case ITEM_APPLE: return "apple";
+    case ITEM_PEACH: return "peach";
+    case ITEM_PEAR: return "pear";
+    case ITEM_CHERRY: return "cherry";
+    case ITEM_ORANGE: return "orange";
     default: return "?";
+  }
+}
+
+bool isEatableFood(uint8_t id) {
+  switch (id) {
+    case ITEM_COOKED_MEAT:
+    case ITEM_APPLE:
+    case ITEM_PEACH:
+    case ITEM_PEAR:
+    case ITEM_CHERRY:
+    case ITEM_ORANGE:
+      return true;
+    default:
+      return false;
   }
 }
 
@@ -369,6 +388,11 @@ int craftItemTile(uint8_t id) {
     case ITEM_STONE_HOE: return TILE_STONE_HOE;
     case ITEM_BOAT: return TILE_BOAT;
     case ITEM_SWORD: return TILE_SWORD;
+    case ITEM_APPLE: return TILE_APPLE;
+    case ITEM_PEACH: return TILE_PEACH;
+    case ITEM_PEAR: return TILE_PEAR;
+    case ITEM_CHERRY: return TILE_CHERRY;
+    case ITEM_ORANGE: return TILE_ORANGE;
     default: return TILE_NONE;
   }
 }

@@ -202,6 +202,126 @@ void drawTallGrass(TileCtx& c, Mulberry32& rng) {
   }
 }
 
+// A single stalk rising from the bottom edge, same billboard-on-transparent-
+// field idea as drawTallGrass — shared by every flower kind below, which
+// just draw their own head on top of it. Kept separate from the grass blade
+// scatter since a flower is one stem, not a tuft.
+void drawFlowerStem(TileCtx& c, Mulberry32& rng, int stemTop) {
+  int cx = TILE_PX / 2;
+  for (int y = TILE_PX - 1; y >= stemTop; y--) {
+    c.setFill(mix(hex(0x3f8f2a), hex(0x2f6b18), rng.next() * 0.3));
+    c.fillRect(cx, y, 1, 1);
+  }
+}
+
+// Bold 4-petal diamond in solid blocks with a dark center — reads as a
+// poppy's simple round-petaled silhouette (minecraft.wiki) even at this
+// size, distinct from the other three kinds' thinner, more scattered heads.
+void drawFlowerPoppy(TileCtx& c, Mulberry32& rng) {
+  int cx = TILE_PX / 2, headY = 5;
+  drawFlowerStem(c, rng, headY + 3);
+  Color petal = hex(0xd42a2a), petalD = hex(0x9c1c1c);
+  const int OFF[4][2] = { { -2, -2 }, { 1, -2 }, { -2, 1 }, { 1, 1 } };
+  for (const auto& o : OFF) {
+    c.setFill(mix(petal, petalD, rng.next() * 0.3));
+    c.fillRect(cx + o[0], headY + o[1], 2, 2);
+  }
+  c.setFill(hex(0x2b2118));
+  c.fillRect(cx - 1, headY - 1, 2, 2);
+}
+
+// A tight fluffy round cluster — the dandelion's "little sun" silhouette,
+// softer and rounder than the poppy's blocky petals.
+void drawFlowerDandelion(TileCtx& c, Mulberry32& rng) {
+  int cx = TILE_PX / 2, headY = 5;
+  drawFlowerStem(c, rng, headY + 3);
+  Color base = hex(0xe8c53a), dark = hex(0xc79f1e), light = hex(0xf5da6a);
+  const int PATTERN[5][5] = {
+    { 0, 1, 1, 1, 0 }, { 1, 1, 1, 1, 1 }, { 1, 1, 1, 1, 1 },
+    { 1, 1, 1, 1, 1 }, { 0, 1, 1, 1, 0 },
+  };
+  for (int dy = 0; dy < 5; dy++) {
+    for (int dx = 0; dx < 5; dx++) {
+      if (!PATTERN[dy][dx]) continue;
+      double r = rng.next();
+      c.setFill(r < 0.3 ? dark : r > 0.75 ? light : base);
+      c.fillRect(cx - 2 + dx, headY - 2 + dy, 1, 1);
+    }
+  }
+}
+
+// A wide ring of thin single-pixel petals around a yellow center — the
+// oxeye-daisy silhouette (minecraft.wiki), reaching further out than any of
+// the other three kinds for a spikier outline.
+void drawFlowerDaisy(TileCtx& c, Mulberry32& rng) {
+  int cx = TILE_PX / 2, headY = 5;
+  drawFlowerStem(c, rng, headY + 3);
+  Color petal = hex(0xf4f4f0), petalD = hex(0xd8d8d0);
+  const int PETALS[8][2] = {
+    { 0, -3 }, { 0, 3 }, { -3, 0 }, { 3, 0 }, { -2, -2 }, { 2, -2 }, { -2, 2 }, { 2, 2 },
+  };
+  for (const auto& o : PETALS) {
+    c.setFill(mix(petal, petalD, rng.next() * 0.25));
+    c.fillRect(cx + o[0], headY + o[1], 1, 1);
+  }
+  c.setFill(hex(0xe8c53a));
+  c.fillRect(cx - 1, headY - 1, 2, 2);
+}
+
+// A tight 8-point blue-violet star, smaller radius than the daisy's — the
+// cornflower's compact head (minecraft.wiki) next to the daisy's wide one.
+void drawFlowerCornflower(TileCtx& c, Mulberry32& rng) {
+  int cx = TILE_PX / 2, headY = 5;
+  drawFlowerStem(c, rng, headY + 3);
+  Color petal = hex(0x3f5fd6), petalD = hex(0x2a3fa8);
+  const int PETALS[8][2] = {
+    { 0, -2 }, { 0, 2 }, { -2, 0 }, { 2, 0 }, { -1, -1 }, { 1, -1 }, { -1, 1 }, { 1, 1 },
+  };
+  for (const auto& o : PETALS) {
+    c.setFill(mix(petal, petalD, rng.next() * 0.3));
+    c.fillRect(cx + o[0], headY + o[1], 1, 1);
+  }
+  c.setFill(hex(0x1f2a5c));
+  c.fillRect(cx, headY, 1, 1);
+}
+
+// Ordinary speckled leaves (drawLeaves) with one round fruit blob painted in
+// the middle — covers the WHOLE tile like every other block face, unlike the
+// flowers' transparent billboard. Shared by all 4 fruit kinds below; only
+// the fruit's own colors change.
+void drawFruitOnLeaves(TileCtx& c, Mulberry32& rng, Color base, Color dark, Color light) {
+  drawLeaves(c, rng);
+  int cx = TILE_PX / 2, cy = TILE_PX / 2;
+  const int PATTERN[6][6] = {
+    { 0, 0, 1, 1, 0, 0 }, { 0, 1, 1, 1, 1, 0 }, { 1, 1, 1, 1, 1, 1 },
+    { 1, 1, 1, 1, 1, 1 }, { 0, 1, 1, 1, 1, 0 }, { 0, 0, 1, 1, 0, 0 },
+  };
+  for (int dy = 0; dy < 6; dy++) {
+    for (int dx = 0; dx < 6; dx++) {
+      if (!PATTERN[dy][dx]) continue;
+      double r = rng.next();
+      c.setFill(r < 0.3 ? dark : r > 0.75 ? light : base);
+      c.fillRect(cx - 3 + dx, cy - 3 + dy, 1, 1);
+    }
+  }
+}
+
+void drawLeavesApple(TileCtx& c, Mulberry32& rng) {
+  drawFruitOnLeaves(c, rng, hex(0xd42a2a), hex(0x9c1c1c), hex(0xf0524a));
+}
+void drawLeavesPeach(TileCtx& c, Mulberry32& rng) {
+  drawFruitOnLeaves(c, rng, hex(0xf5a15c), hex(0xc9793a), hex(0xffc98a));
+}
+void drawLeavesPear(TileCtx& c, Mulberry32& rng) {
+  drawFruitOnLeaves(c, rng, hex(0xc8d24a), hex(0xa0ab2e), hex(0xe0ea6e));
+}
+void drawLeavesCherry(TileCtx& c, Mulberry32& rng) {
+  drawFruitOnLeaves(c, rng, hex(0xb81c3a), hex(0x821229), hex(0xe04060));
+}
+void drawLeavesOrange(TileCtx& c, Mulberry32& rng) {
+  drawFruitOnLeaves(c, rng, hex(0xf5921e), hex(0xc9720f), hex(0xffb84f));
+}
+
 // Sprites need a dark outline to read against the inventory slot: the stone
 // gray used for tool heads (0x8a8a8e) is almost exactly the slot's own gray
 // (0x8b8b8b), so an un-outlined pickaxe head would be invisible.
@@ -271,6 +391,8 @@ const TileDrawer TILE_DRAWERS[TILE_FIRST_ITEM] = {
   drawGrassTop, drawGrassSide, drawDirt, drawStone, drawSand,
   drawWoodTop, drawWoodSide, drawLeaves, drawWater, drawBedrock,
   drawSnow, drawIce, drawRedrock, drawTallGrass, drawCoal,
+  drawFlowerPoppy, drawFlowerDandelion, drawFlowerDaisy, drawFlowerCornflower,
+  drawLeavesApple, drawLeavesPeach, drawLeavesPear, drawLeavesCherry, drawLeavesOrange,
 };
 
 } // namespace

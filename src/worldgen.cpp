@@ -333,12 +333,37 @@ static int treeHeightFor(int wx, int wz, int surfaceY) {
   return std::min(h, room);
 }
 
-static void plantTree(Chunk& chunk, int lx, int surfaceY, int lz, int trunkHeight) {
+// Grass-biome trees (never snow ones) have a chance to bear one of the 5
+// fruits. A fruiting tree does NOT turn its whole canopy into fruiting
+// leaves — only a random 1-10 of its leaf cells do, the rest stay plain
+// BLOCK_LEAVES, so a fruit reads as something scattered through the crown
+// rather than every single leaf carrying one. One roll per tree (keyed off
+// its trunk position) decides whether it bears fruit at all, a second picks
+// which of the 5 kinds, a third picks how many (1-10).
+static const double FRUIT_TREE_CHANCE = 0.25;
+
+static uint8_t fruitLeafBlockFor(int wx, int wz, bool eligible) {
+  if (!eligible) return BLOCK_LEAVES;
+  if (hash2D(wx * 41 + 7, wz * 43 + 19) >= FRUIT_TREE_CHANCE) return BLOCK_LEAVES;
+  int kind = (int)(hash2D(wx * 47 + 23, wz * 53 + 29) * FRUIT_KIND_COUNT);
+  kind = std::min(kind, FRUIT_KIND_COUNT - 1);
+  return FRUIT_LEAF_BLOCKS[kind];
+}
+
+static void plantTree(Chunk& chunk, int lx, int surfaceY, int lz, int trunkHeight,
+                      uint8_t fruitLeafBlock, int wx, int wz) {
   for (int dy = 1; dy <= trunkHeight; dy++) {
     chunk.setLocal(lx, surfaceY + dy, lz, BLOCK_WOOD);
   }
   int topY = surfaceY + trunkHeight;
   int radius = treeCanopyRadius(trunkHeight);
+  bool bearsFruit = fruitLeafBlock != BLOCK_LEAVES;
+
+  // Every newly-leaved cell is recorded here (only populated when this tree
+  // bears fruit) so a random subset of them — not the whole canopy — can be
+  // picked afterward to actually carry a fruit.
+  struct LeafCell { int x, y, z; double priority; };
+  std::vector<LeafCell> leafCells;
 
   // Canopy depth scales too, so tall trees carry a deep crown rather than
   // a flat cap perched on a bare pole. Each layer is cut to a disc by a
@@ -357,8 +382,24 @@ static void plantTree(Chunk& chunk, int lx, int surfaceY, int lz, int trunkHeigh
         int x = lx + dx;
         int z = lz + dz;
         if (!Chunk::inBounds(x, y, z)) continue;
-        if (chunk.getLocal(x, y, z) == BLOCK_AIR) chunk.setLocal(x, y, z, BLOCK_LEAVES);
+        if (chunk.getLocal(x, y, z) != BLOCK_AIR) continue;
+        chunk.setLocal(x, y, z, BLOCK_LEAVES);
+        if (bearsFruit) {
+          int wcx = wx - lx + x, wcz = wz - lz + z; // this cell's world x/z
+          leafCells.push_back({ x, y, z, hash2D(wcx * 10007 + y * 97, wcz * 10007 - y * 131) });
+        }
       }
+    }
+  }
+
+  if (bearsFruit && !leafCells.empty()) {
+    int fruitCount = 1 + (int)(hash2D(wx * 61 + 3, wz * 67 + 5) * 10); // 1..10
+    fruitCount = std::min(fruitCount, (int)leafCells.size());
+    std::sort(leafCells.begin(), leafCells.end(),
+             [](const LeafCell& a, const LeafCell& b) { return a.priority > b.priority; });
+    for (int i = 0; i < fruitCount; i++) {
+      const LeafCell& c = leafCells[i];
+      chunk.setLocal(c.x, c.y, c.z, fruitLeafBlock);
     }
   }
 }
@@ -567,7 +608,8 @@ std::unique_ptr<Chunk> generateChunk(int cx, int cz) {
           lz - radius < 0 || lz + radius >= CHUNK_SIZE) {
         continue; // crown would cross a chunk boundary
       }
-      plantTree(*chunk, lx, info.surfaceY, lz, height);
+      uint8_t fruitLeafBlock = fruitLeafBlockFor(wx, wz, onGrass); // snow trees never bear fruit
+      plantTree(*chunk, lx, info.surfaceY, lz, height, fruitLeafBlock, wx, wz);
     }
   }
 
@@ -588,6 +630,31 @@ std::unique_ptr<Chunk> generateChunk(int cx, int cz) {
       // Low density: only ~15% of grass blocks grow a tuft.
       if (hash2D(wx * 3 + 11, wz * 5 + 29) < 0.15) {
         chunk->setLocal(lx, y + 1, lz, BLOCK_TALL_GRASS);
+      }
+    }
+  }
+
+  // Flowers: same meadow gating as the tall-grass tufts above (so they stay
+  // confined to lush ground, not scattered over bare dirt patches) but much
+  // sparser, and a different hash salt so the two rolls are independent —
+  // a meadow cell can end up with a tuft, a flower, or (usually) neither.
+  // Runs after the tall-grass pass so the "still air above" check already
+  // excludes any cell that pass just claimed.
+  for (int lz = 0; lz < CHUNK_SIZE; lz++) {
+    for (int lx = 0; lx < CHUNK_SIZE; lx++) {
+      const ColumnInfo& info = infos[lz * CHUNK_SIZE + lx];
+      int y = info.surfaceY;
+      if (y <= SEA_LEVEL + 1 || y + 1 >= CHUNK_HEIGHT) continue;
+      if (chunk->getLocal(lx, y, lz) != BLOCK_GRASS) continue;
+      if (chunk->getLocal(lx, y + 1, lz) != BLOCK_AIR) continue;
+      int wx = cx * CHUNK_SIZE + lx;
+      int wz = cz * CHUNK_SIZE + lz;
+      double meadow = gen().noiseMeadow(wx * 0.018, wz * 0.018);
+      if (meadow <= 0.05) continue;
+      if (hash2D(wx * 7 + 41, wz * 11 + 53) < 0.04) {
+        int kind = (int)(hash2D(wx * 13 + 61, wz * 17 + 67) * FLOWER_KIND_COUNT);
+        kind = std::min(kind, FLOWER_KIND_COUNT - 1);
+        chunk->setLocal(lx, y + 1, lz, FLOWER_BLOCKS[kind]);
       }
     }
   }
