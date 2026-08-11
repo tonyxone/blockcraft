@@ -260,9 +260,20 @@ static void createSession(const SaveState* save) {
   std::vector<int> counts = save ? save->hotbarCounts : std::vector<int>();
   g_hotbar = std::make_unique<Hotbar>(HOTBAR_ORDER, HOTBAR_ORDER_LEN, counts);
   if (save && save->selectedSlot >= 0) g_hotbar->select(save->selectedSlot);
+  if (!save) {
+    // a brand-new game starts with nothing free to place — every resource
+    // has to be mined, not handed out in the hotbar
+    for (Hotbar::Slot& s : g_hotbar->slots) { s.blockId = -1; s.count = 0; }
+  }
 
   g_inventory = std::make_unique<Inventory>();
-  if (save) g_inventory->loadSerialized(save->invIds, save->invCounts);
+  if (save) {
+    g_inventory->loadSerialized(save->invIds, save->invCounts);
+  } else {
+    // the only starting gear: a wood pickaxe in the backpack, to mine the
+    // first stone/wood with
+    g_inventory->main[0] = { ITEM_WOOD_PICKAXE, 1 };
+  }
   g_inventory->characterType = g_settings.characterType;
   g_invOpen = false;
   g_chestOpen = false;
