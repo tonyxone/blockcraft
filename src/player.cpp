@@ -11,6 +11,9 @@ static const double CLIMB_SPEED = 3.0;
 // fully-charged jump 4x as high as a tap.
 static const double JUMP_CHARGE_MAX = 0.6;
 static const double JUMP_SPEED_MAX_MULT = 2.0;
+static const double SWIM_VERTICAL_SPEED = 3.0; // Space/C float speed while swimming
+static const double SWIM_SINK_SPEED = -0.8;    // slow passive sink when neither is held
+static const double SWIM_EASE_RATE = 4.0;      // how fast vertical speed eases toward the target above
 
 void Player::update(double dt, World& world, const MoveInput& input) {
   double fx = -std::sin(yaw), fz = -std::cos(yaw);
@@ -38,6 +41,13 @@ void Player::update(double dt, World& world, const MoveInput& input) {
   if (!nearLadder || (wasClimbing && onGround)) climbing = false;
   else if (spacePressed) climbing = !climbing;
 
+  // Swimming: touching water and not grabbed onto a ladder (ladder wins —
+  // the same priority order the collision checks below already give it).
+  // WASD keeps driving horizontal velocity same as on foot (set above); only
+  // the vertical axis and jump-charging change.
+  swimming = !climbing &&
+             touchingWater(world, position.x, position.y, position.z, PLAYER_HALF_WIDTH, PLAYER_HEIGHT);
+
   if (climbing) {
     // Grabbed on: gravity and the charge-jump are both off, and W/S (not
     // strafing) drive straight up/down instead of walking.
@@ -47,6 +57,13 @@ void Player::update(double dt, World& world, const MoveInput& input) {
     if (input.forward > 0) velocity.y = CLIMB_SPEED;
     else if (input.forward < 0) velocity.y = -CLIMB_SPEED;
     else velocity.y = 0;
+  } else if (swimming) {
+    // No gravity: Space floats up, C floats down, and letting go of both
+    // eases toward a slow passive sink rather than an instant stop, so
+    // swimming reads as buoyant instead of a mid-water ladder.
+    jumpCharging = false;
+    double targetY = input.jump ? SWIM_VERTICAL_SPEED : input.swimDown ? -SWIM_VERTICAL_SPEED : SWIM_SINK_SPEED;
+    velocity.y += (targetY - velocity.y) * std::min(1.0, dt * SWIM_EASE_RATE);
   } else {
     velocity.y = std::max(velocity.y - GRAVITY * dt, TERMINAL_FALL_SPEED);
 
@@ -122,13 +139,14 @@ void Player::update(double dt, World& world, const MoveInput& input) {
   }
 
   // Hunger drains slowly over time; health regenerates slowly while hunger
-  // is high enough. Nothing lowers health yet (no fall damage, no combat
-  // against the player), so this loop is stable — it drains and occasionally
-  // regenerates without ever needing a death path.
+  // is high enough, and drains on its own once hunger bottoms out — starving
+  // is the one damage source that exists yet (no fall damage, no combat
+  // against the player besides that).
   const double HUNGER_DRAIN_INTERVAL = 30.0;         // 1 point every 30s of play
   const double HUNGER_DRAIN_INTERVAL_BOOSTED = 15.0; // half as long, while hungerBoostTimer is running
   const double REGEN_INTERVAL = 4.0;                 // 1 point every 4s, while fed
   const int REGEN_HUNGER_THRESHOLD = 6;
+  const double STARVE_INTERVAL = 4.0; // 1 point every 4s, while hunger is empty
   if (hungerBoostTimer > 0) hungerBoostTimer = std::max(0.0, hungerBoostTimer - dt);
   double hungerDrainInterval = hungerBoostTimer > 0 ? HUNGER_DRAIN_INTERVAL_BOOSTED : HUNGER_DRAIN_INTERVAL;
   hungerTimer += dt;
@@ -144,5 +162,49 @@ void Player::update(double dt, World& world, const MoveInput& input) {
     }
   } else {
     regenTimer = 0;
+  }
+  if (hunger <= 0 && health > 0) {
+    starveTimer += dt;
+    while (starveTimer >= STARVE_INTERVAL && health > 0) {
+      starveTimer -= STARVE_INTERVAL;
+      health--;
+    }
+  } else {
+    starveTimer = 0;
+  }
+
+  // Breath: drains only while the EYE is underwater (you can swim with your
+  // head above the surface and breathe fine), refills instantly back at the
+  // surface, and once it's empty starts costing health the same pacing
+  // starvation above uses.
+  const double OXYGEN_DRAIN_INTERVAL = 1.0; // 1 bubble per second, submerged
+  const double DROWN_DAMAGE_INTERVAL = 1.0; // 1 health per second, once empty
+  Vec3 eye = eyePosition();
+  bool eyeSubmerged = isWater(
+      world.getBlock((int)std::floor(eye.x), (int)std::floor(eye.y), (int)std::floor(eye.z)));
+  if (eyeSubmerged) {
+    oxygenTimer += dt;
+    while (oxygenTimer >= OXYGEN_DRAIN_INTERVAL) {
+      oxygenTimer -= OXYGEN_DRAIN_INTERVAL;
+      if (oxygen > 0) oxygen--;
+    }
+    if (oxygen <= 0 && health > 0) {
+      drownTimer += dt;
+      while (drownTimer >= DROWN_DAMAGE_INTERVAL && health > 0) {
+        drownTimer -= DROWN_DAMAGE_INTERVAL;
+        health--;
+      }
+    } else {
+      drownTimer = 0;
+    }
+  } else {
+    oxygenTimer = 0;
+    drownTimer = 0;
+    oxygen = maxOxygen;
+  }
+
+  if (health <= 0) {
+    health = 0;
+    dead = true;
   }
 }

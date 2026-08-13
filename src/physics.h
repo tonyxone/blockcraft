@@ -20,6 +20,10 @@ bool boxCollidesStairs(World& world, double x, double y, double z, double halfWi
 // can grab on instead of falling.
 bool touchingLadder(World& world, double x, double y, double z, double halfWidth, double height);
 
+// True if any part of the box overlaps a water block — Player::update reads
+// this to switch into swim physics (see Player::swimming).
+bool touchingWater(World& world, double x, double y, double z, double halfWidth, double height);
+
 // True if the box overlaps a ladder's own thin body (it stands ~0.14 blocks
 // proud of the wall it hangs on). Checked on the X/Z axes only: it stops the
 // player from walking straight through the rails from the open side, while

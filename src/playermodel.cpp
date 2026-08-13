@@ -547,6 +547,17 @@ void drawPlayerModel(const Player& player, const PlayerAnim& anim) {
     armR = -18.0 + row;
   }
 
+  // Swimming (touching water, not riding a boat): legs trail together and
+  // arms sweep back, the pose a near-horizontal float actually looks like
+  // rather than the standing walk pose tipped on its side.
+  bool swimPose = player.swimming && !anim.boating;
+  if (swimPose) {
+    legL = 6.0;
+    legR = 6.0;
+    armL = -12.0;
+    armR = -12.0;
+  }
+
   glPushMatrix();
   glTranslated(player.position.x, player.position.y, player.position.z);
   glRotated(player.yaw * 180.0 / PI, 0, 1, 0);
@@ -557,7 +568,16 @@ void drawPlayerModel(const Player& player, const PlayerAnim& anim) {
   // together, so nothing but this offset needs to change) so the hips
   // settle onto the seat instead of floating above the gunwale with the
   // boat's walls hanging in mid-air below the character.
-  if (anim.boating) glTranslated(0, -9.33, 0);
+  if (anim.boating) {
+    glTranslated(0, -9.33, 0);
+  } else if (swimPose) {
+    // Same rigid-rotation trick as the boat's seat offset, just tipping the
+    // whole body forward around a waist-height pivot instead of dropping it
+    // — "face down float" (the request's own words) rather than standing.
+    glTranslated(0, 12.0, 0);
+    glRotated(75.0, 1, 0, 0);
+    glTranslated(0, -12.0, 0);
+  }
 
   glEnable(GL_TEXTURE_2D);
   glBindTexture(GL_TEXTURE_2D, g_currentChar == PlayerCharacter::Alex ? g_texAlex : g_texSteve);

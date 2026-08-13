@@ -7,14 +7,21 @@ class World;
 // fish, researched against the vanilla renders in Desktop\animal\*.png
 // (minecraft.wiki's own JE renders: Cod_JE1.gif, Salmon_JE1.gif,
 // Pufferfish_small/large_JE1.gif, and the two tropical-fish body shapes,
-// Clownfish_TropicalFishA.png / OrnateButterfly_TropicalFishB.png). Purely
-// ambient — no health, no combat, nothing to collect — swimming wildlife to
-// make the water feel alive, not a resource.
+// Clownfish_TropicalFishA.png / OrnateButterfly_TropicalFishB.png). Also a
+// resource now: killable for a species-specific raw fish item (see
+// fishItemFor) that eats like a fruit, same "swing to damage, corpse lies
+// for a beat, then grants the drop" convention animal.h's Animal uses.
 enum FishSpecies {
   FISH_COD,
   FISH_SALMON,
   FISH_PUFFERFISH,
   FISH_TROPICAL,
+  // The one real predator in open water: rare, only spawns in a genuinely
+  // big body of water (see maintainFishSpawns), much bigger and tougher
+  // than every other species, and — once provoked by a hit — chases and
+  // bites the player back (see Fish::provoked, resolved in main.cpp the
+  // same way a provoked land predator is in animal.h/main.cpp).
+  FISH_SHARK,
   FISH_SPECIES_COUNT,
 };
 
@@ -32,6 +39,20 @@ struct FishSpeciesDef {
   // dart, pufferfish drift; within a species there's still a real spread,
   // not every fish of a kind moving in lockstep.
   double minSpeed, maxSpeed;
+  // Double, not int, same reason AnimalSpeciesDef::maxHealth is — tools.h's
+  // attackPower comes in 0.5 steps. Tiny fish, so this stays low: even the
+  // bare-handed swing (attackPower's floor) kills in a hit or two.
+  double maxHealth;
+  // Half-extents at scale=1.0 (fish.position is body-center, unlike
+  // Animal's feet-anchored AABB) — raycastFish scales these by the fish's
+  // own Fish::scale. Roughly matches each species' drawElongatedFish/
+  // drawPufferfish body box in fish.cpp, not pixel-exact: it only needs to
+  // be close enough that a shot aimed at the fish's body registers.
+  double halfLength, halfWidth, halfHeight;
+  // A bite's damage, 0 for every ambient species — only the shark ever
+  // attacks back, so unlike AnimalSpeciesDef::predator this is a flat
+  // per-species number rather than a formula off size.
+  double attackPower;
 };
 extern const FishSpeciesDef FISH_SPECIES[FISH_SPECIES_COUNT];
 
@@ -57,6 +78,14 @@ struct Fish {
   double targetPitch = 0;
   double animPhase = 0; // tail-wag phase, always advancing — fish never fully stop swimming
 
+  // Alternating slow-drift / fast-dart swim phase: speedPhaseMult multiplies
+  // on top of speedMult, speedPhaseTimer counts down to the next phase
+  // switch. Starts at 0 so the very first update() tick immediately rolls
+  // an initial phase instead of swimming at 1x until the first switch.
+  bool fastPhase = false;
+  double speedPhaseMult = 1.0;
+  double speedPhaseTimer = 0;
+
   // Tropical fish only: which color pattern (0..TROPICAL_PATTERN_COUNT-1)
   // and body shape (vanilla's "A" streamlined vs "B" tall/disc-bodied).
   int patternIndex = 0;
@@ -66,6 +95,24 @@ struct Fish {
   // the real mob does — smoothed 0..1 rather than a hard cut, so the swap
   // between the small and large reference renders reads as an animation.
   double puffAmount = 0;
+
+  // Combat/death, same convention as Animal::health/dying/deathTimer: takes
+  // damage from tryMine's swing, and once health reaches 0 stops swimming
+  // (updateFish returns immediately) and lies dead in place for deathTimer
+  // seconds before main.cpp grants the drop and removes it — a kill reads
+  // as an event instead of an instant pop.
+  double health = 1;
+  bool dying = false;
+  double deathTimer = 0;
+
+  // Shark only: set the instant the player lands a hit, cleared once
+  // provokedTimer runs out without a fresh one. While provoked, updateFish
+  // chases the player instead of ambient wandering; main.cpp resolves the
+  // actual bite once close enough, gated by attackCooldown — same pattern
+  // animal.h's Animal uses for a provoked land predator.
+  bool provoked = false;
+  double provokedTimer = 0;
+  double attackCooldown = 0;
 };
 
 // Advances one fish's swim AI and physics one frame — wanders in 3D, turning
@@ -89,3 +136,17 @@ void drawFishes(const std::vector<Fish>& fishes);
 // do, and prunes anything that has drifted well outside that range.
 void maintainFishSpawns(World& world, std::vector<Fish>& fishes, double px, double pz,
                         int renderDistance);
+
+// Ray-vs-AABB test against every non-dying fish in the list (each fish's box
+// built from its species' half-extents scaled by its own Fish::scale), same
+// reach convention and "closest hit within reach, or -1" contract as
+// animal.h's raycastAnimal.
+int raycastFish(const std::vector<Fish>& fishes, const Vec3& origin, const Vec3& dir,
+                double reach);
+
+// The CraftItem (recipes.h) a killed fish of this species drops — one raw
+// fish per kill, unlike meatDropFor's size-scaled count, since each species
+// is its own distinct item/icon rather than a shared "raw meat" stack.
+// Returned as int (not the CraftItem enum's uint8_t) so fish.h doesn't need
+// to include recipes.h just for this one declaration.
+int fishItemFor(FishSpecies species);

@@ -113,6 +113,14 @@ enum Tile : int {
   // flask, so the two read apart even at slot size (item_art.cpp).
   TILE_POTION_SMALL,
   TILE_POTION_BIG,
+  // One icon per fish species (item_art.cpp) — a killed fish (fish.h) drops
+  // ITEM_RAW_COD/SALMON/PUFFERFISH/RAW_TROPICAL_FISH, and each needs to read
+  // apart from the others at a glance the same way the fruits do.
+  TILE_RAW_COD,
+  TILE_RAW_SALMON,
+  TILE_RAW_PUFFERFISH,
+  TILE_RAW_TROPICAL_FISH,
+  TILE_RAW_SHARK,
 
   // World textures for the crafted goods that can be placed. Separate from
   // the slot icons above: an icon is a small shape on a transparent field,

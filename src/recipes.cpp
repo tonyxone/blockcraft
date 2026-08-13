@@ -344,6 +344,11 @@ const char* craftItemName(uint8_t id) {
     case ITEM_ORANGE: return "orange";
     case ITEM_HEALTH_POTION_SMALL: return "small health potion";
     case ITEM_HEALTH_POTION_BIG: return "big health potion";
+    case ITEM_RAW_COD: return "raw cod";
+    case ITEM_RAW_SALMON: return "raw salmon";
+    case ITEM_RAW_PUFFERFISH: return "raw pufferfish";
+    case ITEM_RAW_TROPICAL_FISH: return "raw tropical fish";
+    case ITEM_RAW_SHARK: return "raw shark";
     default: return "?";
   }
 }
@@ -356,6 +361,11 @@ bool isEatableFood(uint8_t id) {
     case ITEM_PEAR:
     case ITEM_CHERRY:
     case ITEM_ORANGE:
+    case ITEM_RAW_COD:
+    case ITEM_RAW_SALMON:
+    case ITEM_RAW_PUFFERFISH:
+    case ITEM_RAW_TROPICAL_FISH:
+    case ITEM_RAW_SHARK:
       return true;
     default:
       return false;
@@ -414,6 +424,11 @@ int craftItemTile(uint8_t id) {
     case ITEM_ORANGE: return TILE_ORANGE;
     case ITEM_HEALTH_POTION_SMALL: return TILE_POTION_SMALL;
     case ITEM_HEALTH_POTION_BIG: return TILE_POTION_BIG;
+    case ITEM_RAW_COD: return TILE_RAW_COD;
+    case ITEM_RAW_SALMON: return TILE_RAW_SALMON;
+    case ITEM_RAW_PUFFERFISH: return TILE_RAW_PUFFERFISH;
+    case ITEM_RAW_TROPICAL_FISH: return TILE_RAW_TROPICAL_FISH;
+    case ITEM_RAW_SHARK: return TILE_RAW_SHARK;
     default: return TILE_NONE;
   }
 }

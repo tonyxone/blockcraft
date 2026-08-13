@@ -43,12 +43,22 @@ struct AnimalSpeciesDef {
   // where real differentiation shows up.
   bool biomes[4];
   double halfWidth, height; // collision AABB, same convention as PLAYER_HALF_WIDTH/HEIGHT
+  // True only for wolf and polar bear: the two species that fight back once
+  // provoked (see Animal::provoked) instead of just running. Every other
+  // species is prey — it flees, and attackPowerFor always reports 0 for it,
+  // since it never attacks regardless of size.
+  bool predator;
 };
 extern const AnimalSpeciesDef ANIMAL_SPECIES[ANIMAL_SPECIES_COUNT];
 
 // Raw meat dropped on death, sized the same way health is (§4's tiers):
 // rabbit/chicken/cat/ocelot 1, sheep/pig/wolf 2, cow/panda 3, polar bear 4.
 int meatDropFor(AnimalSpecies species);
+
+// A predator's bite, scaled off its own size (species height) the same way
+// health already is — bigger predator, harder bite. 0 for prey: being
+// attacked makes them run, never fight back, no matter how big they are.
+double attackPowerFor(AnimalSpecies species);
 
 struct Animal {
   AnimalSpecies species = ANIMAL_PIG;
@@ -64,6 +74,16 @@ struct Animal {
   double targetYaw = 0;
   double animPhase = 0; // leg-swing phase, advances while moving on the ground
 
+  // Set the moment the player lands a hit, and cleared again once
+  // provokedTimer runs out without a fresh one — a prey species (see
+  // AnimalSpeciesDef::predator) spends that whole window running straight
+  // away from the player instead of wandering; a predator spends it chasing
+  // and, once close enough, biting (main.cpp resolves the actual bite,
+  // gated by attackCooldown).
+  bool provoked = false;
+  double provokedTimer = 0;
+  double attackCooldown = 0;
+
   // Death sequence: once health reaches 0 the animal isn't removed right
   // away — it lies down for a few seconds (see drawAnimals) before actually
   // leaving the world, so a kill reads as an event instead of a pop.
@@ -74,7 +94,9 @@ struct Animal {
 // Advances one animal's simple wander/jump AI and physics one frame. Uses
 // the same boxCollides family (physics.h) the player does, against a
 // per-species AABB, so animals collide with terrain identically.
-void updateAnimal(Animal& animal, World& world, double dt);
+// `playerPos` steers the chase/flee behavior above once provoked; it's
+// otherwise unused (same as fish.h's updateFish taking it for pufferfish).
+void updateAnimal(Animal& animal, World& world, double dt, const Vec3& playerPos);
 
 // Draws every animal in the list, flat-shaded (no texture atlas — see
 // animal.cpp). Handles its own GL_TEXTURE_2D disable/re-enable so callers

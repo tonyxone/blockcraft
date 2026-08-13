@@ -12,6 +12,8 @@ enum class MenuAction {
   Load,       // open the load panel (main.cpp supplies the save list)
   Resume,
   Restart,
+  Respawn,    // death screen's own "back to playing" action
+
   Save,       // open the save panel (main.cpp supplies the default name)
   Quit,       // main menu Quit (exit app)
   QuitToMenu, // pause menu Quit
@@ -47,7 +49,7 @@ inline constexpr int DISPLAY_MODE_COUNT = 2;
 inline constexpr const char* CHARACTER_LABELS[] = { "Steve", "Alex" };
 inline constexpr int CHARACTER_COUNT = 2;
 
-enum class MenuPanel { Main, Pause, SettingsPanel, SaveGamePanel, LoadGamePanel, ConfirmPanel };
+enum class MenuPanel { Main, Pause, Dead, SettingsPanel, SaveGamePanel, LoadGamePanel, ConfirmPanel };
 
 class Menu {
 public:

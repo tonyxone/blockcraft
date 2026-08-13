@@ -71,7 +71,7 @@ static HGLRC g_rc = nullptr;
 static int g_winW = 1280, g_winH = 720;
 static bool g_running = true;
 
-enum class GameState { Menu, Playing, Paused };
+enum class GameState { Menu, Playing, Paused, Dead };
 static GameState g_state = GameState::Menu;
 static bool g_thirdPerson = false; // V toggles first/third person
 
@@ -96,24 +96,6 @@ static std::vector<Boat> g_boats;
 static int g_playerBoatIndex = -1; // index into g_boats while driving, -1 when on foot
 static double g_boatRowPhase = 0;  // advances while actively rowing; drives paddle animation
 
-// A floating "-1.5" that pops up over an animal's head on a hit and fades
-// after half a second. World-space position, but drawn as flat 2D HUD text
-// (see worldToScreen) since there's no billboarded-3D-text machinery here.
-struct DamagePopup {
-  Vec3 position;
-  double amount;
-  double timer;
-};
-static std::vector<DamagePopup> g_damagePopups;
-const double DAMAGE_POPUP_LIFETIME = 0.5;
-
-// Camera matrices captured once per frame right after setup3D() — the exact
-// view+projection state every world-space point was drawn with — so
-// worldToScreen() can place 2D HUD text over a 3D position without needing
-// GLU's gluProject (build.bat links no glu32.lib, and this is the only
-// place that would ever need it).
-static double g_camModelview[16], g_camProjection[16];
-static int g_camViewport[4];
 static bool g_invOpen = false; // inventory screen overlay (I key)
 static bool g_chestOpen = false; // chest screen overlay (E key on a chest)
 static bool g_fullMapOpen = false; // whole-world map overlay (M key)
@@ -171,6 +153,7 @@ static MoveInput getMoveInput() {
   in.right = (g_keys['D'] ? 1 : 0) - (g_keys['A'] ? 1 : 0);
   in.jump = g_keys[VK_SPACE];
   in.sprint = g_keys[VK_SHIFT];
+  in.swimDown = g_keys['C'];
   return in;
 }
 
@@ -211,7 +194,6 @@ static void createSession(const SaveState* save) {
 
   g_animals.clear(); // not persisted (like a furnace's lit state) — fresh each session
   g_animalSpawnTimer = 0;
-  g_damagePopups.clear();
   g_droppedItems.clear(); // dropped items don't survive a reload either
   g_fishes.clear();
   g_fishSpawnTimer = 0;
@@ -368,6 +350,34 @@ static void pauseGame() {
   clearKeys();
   setCursorCaptured(false);
   g_menu.showPanel(MenuPanel::Pause);
+}
+
+// Health hit 0 (Player::update set g_player->dead): freeze the game behind
+// a red "Dead" screen, same "close panels, release the cursor" shape as
+// pauseGame(), just with nothing to resume back to — only Respawn/Main Menu.
+static void killPlayer() {
+  if (g_state != GameState::Playing) return;
+  closeInventory();
+  closeChest();
+  g_state = GameState::Dead;
+  clearKeys();
+  setCursorCaptured(false);
+  g_menu.showPanel(MenuPanel::Dead);
+}
+
+// Respawn: full health/hunger and a fresh spawn point, the same
+// spawnPositionFresh() a brand new game starts at rather than wherever the
+// player died — mirrors beginPlaying()'s own state reset at the end.
+static void respawnPlayer() {
+  if (!g_player) return;
+  g_player->position = spawnPositionFresh();
+  g_player->velocity = Vec3(0, 0, 0);
+  g_player->health = g_player->maxHealth;
+  g_player->hunger = g_player->maxHunger;
+  g_player->starveTimer = 0;
+  g_player->regenTimer = 0;
+  g_player->dead = false;
+  beginPlaying();
 }
 
 static void startNewGame() {
@@ -756,8 +766,12 @@ static void tryMine() {
   if (holdingTool) playSwingSound();
 
   // An animal in reach takes priority over mining a block behind it — the
-  // same swing either attacks or mines, never both.
-  int animalHit = raycastAnimal(g_animals, g_player->eyePosition(), lookDirection(), MINE_REACH);
+  // same swing either attacks or mines, never both. Riding a boat skips
+  // combat entirely (both hands are on the paddle, not swinging a weapon),
+  // so this whole priority check only runs on foot.
+  int animalHit = g_playerBoatIndex < 0
+                      ? raycastAnimal(g_animals, g_player->eyePosition(), lookDirection(), MINE_REACH)
+                      : -1;
   if (animalHit >= 0) {
     Animal& target = g_animals[animalHit];
     // Damage comes from whatever's actually gripped in the hand (mainHand,
@@ -772,15 +786,42 @@ static void tryMine() {
     double dmg = attackPower(weapon);
     target.health -= dmg;
     playHitSound();
-    g_damagePopups.push_back(
-        { Vec3(target.position.x, target.position.y + ANIMAL_SPECIES[target.species].height + 0.1,
-              target.position.z),
-         dmg, DAMAGE_POPUP_LIFETIME });
+    // Provoked: a prey species (AnimalSpeciesDef::predator false) spends
+    // this window running from the player instead of wandering; a predator
+    // spends it chasing and biting back (see the per-frame loops below).
+    target.provoked = true;
+    target.provokedTimer = 15.0;
     if (target.health <= 0 && !target.dying) {
       target.dying = true;
       target.deathTimer = 3.0;
       target.velocity = Vec3(0, 0, 0);
       target.moving = false;
+    }
+    return;
+  }
+
+  // Same priority rule for fish: a fish in reach (underwater, say) is
+  // attacked instead of mining whatever's behind it — also skipped while
+  // boating, same as the animal check above.
+  int fishHit = g_playerBoatIndex < 0
+                    ? raycastFish(g_fishes, g_player->eyePosition(), lookDirection(), MINE_REACH)
+                    : -1;
+  if (fishHit >= 0) {
+    Fish& target = g_fishes[fishHit];
+    uint8_t weapon = holdingTool ? (uint8_t)g_inventory->mainHand.blockId
+                                 : (uint8_t)(g_hotbar ? g_hotbar->selectedBlockId() : -1);
+    double dmg = attackPower(weapon);
+    target.health -= dmg;
+    playHitSound();
+    // Only the shark ever does anything with this (FishSpeciesDef::
+    // attackPower is 0 for every other species, see the bite loop below) —
+    // harmless to set unconditionally, same as the animal provoke above.
+    target.provoked = true;
+    target.provokedTimer = 15.0;
+    if (target.health <= 0 && !target.dying) {
+      target.dying = true;
+      target.deathTimer = 2.0;
+      target.velocity = Vec3(0, 0, 0);
     }
     return;
   }
@@ -992,7 +1033,15 @@ static void tryPlace() {
   // overwrites the tuft rather than being refused.
   uint8_t target = g_world->getBlock(px, py, pz);
   if (target != BLOCK_AIR && !isPlant(target)) return;
-  if (placementOverlapsPlayer(px, py, pz)) return;
+  // Building straight down into your own feet cell (aiming at the top face
+  // of whatever you're standing on) is the one placementOverlapsPlayer
+  // refusal that should go through anyway: instead of a wall you can never
+  // pillar yourself up out of, let it place and lift the player onto the new
+  // block's top face afterward — the same "look down, build up" scaffolding
+  // move Minecraft itself allows.
+  bool underOwnFeet = hit.normal[0] == 0 && hit.normal[1] == 1 && hit.normal[2] == 0 &&
+                      py == (int)std::floor(g_player->position.y + 1e-4);
+  if (!underOwnFeet && placementOverlapsPlayer(px, py, pz)) return;
   int selected = g_hotbar->selectedBlockId();
   if (selected < 0) return;
   // Checked BEFORE the item is spent: a tool or a stick is not building
@@ -1042,6 +1091,7 @@ static void tryPlace() {
   if (blockId < 0) return;
 
   std::vector<Chunk*> affected = g_world->setBlock(px, py, pz, (uint8_t)blockId);
+  if (underOwnFeet) g_player->position.y = py + 1; // stand on top of the block just placed underfoot
   // A ladder climbs LADDER_PLACE_LENGTH blocks in one go rather than one rung
   // at a time: fill upward as far as it's clear, stopping at the first
   // obstruction (or the world top). Placing another ladder above an existing
@@ -1230,6 +1280,7 @@ static void handleMenuAction(MenuAction action) {
     case MenuAction::Load: openLoadPanel(); break;
     case MenuAction::LoadNamed: loadNamedAndPlay(g_menu.selectedSave); break;
     case MenuAction::Resume: beginPlaying(); break;
+    case MenuAction::Respawn: respawnPlayer(); break;
     case MenuAction::Restart: startNewGame(); break;
     case MenuAction::Save: openSavePanel(); break;
     case MenuAction::ConfirmSave: confirmSaveGame(); break;
@@ -1497,6 +1548,30 @@ static void drawDrumstickIcon(double x, double y, double size, double fraction) 
   drawPixelIcon(x, y, size, fraction, ROWS, PALETTE);
 }
 
+// A simple pale-blue air bubble — same outline/fill/highlight construction
+// as the heart and drumstick icons above, drawn above the hunger row only
+// while Player::oxygen is below max (see drawHealthHunger).
+static void drawBubbleIcon(double x, double y, double size, double fraction) {
+  static const char* const ROWS[9] = {
+    ".........",
+    "..#####..",
+    ".#BBBBB#.",
+    "#BBHBBBB#",
+    "#BBBBBBB#",
+    "#BBBBBBB#",
+    ".#BBBBB#.",
+    "..#####..",
+    ".........",
+  };
+  static const IconColor PALETTE[] = {
+    { '#', 0.05, 0.10, 0.22 }, // outline
+    { 'B', 0.55, 0.78, 0.98 }, // main pale blue
+    { 'H', 0.90, 0.97, 1.00 }, // top-left shine
+    { 0, 0, 0, 0 },
+  };
+  drawPixelIcon(x, y, size, fraction, ROWS, PALETTE);
+}
+
 // Pip size and spacing for the health/hunger rows, shared by drawStatRow
 // and drawHealthHunger so the two can't drift apart (they used to each
 // declare their own copy).
@@ -1531,43 +1606,22 @@ static void drawHealthHunger() {
   double rowY = hy - ROW_GAP - STAT_ICON;
   drawStatRow(g_player->health, g_player->maxHealth, hx, rowY, true);
   double drumstickRowW = HUNGER_PIPS_SHOWN * (STAT_ICON + STAT_GAP) - STAT_GAP;
-  drawStatRow(g_player->hunger, HUNGER_PIPS_SHOWN * 2, hx + hw - drumstickRowW, rowY, false);
-}
+  double drumstickRowX = hx + hw - drumstickRowW;
+  drawStatRow(g_player->hunger, HUNGER_PIPS_SHOWN * 2, drumstickRowX, rowY, false);
 
-// Manual gluProject: multiplies through the camera matrices captured at the
-// top of render() and maps clip space to screen pixels. False if the point
-// is behind the camera (nothing sensible to draw there).
-static bool worldToScreen(const Vec3& p, double& outX, double& outY) {
-  const double* mv = g_camModelview;
-  double ex = mv[0] * p.x + mv[4] * p.y + mv[8] * p.z + mv[12];
-  double ey = mv[1] * p.x + mv[5] * p.y + mv[9] * p.z + mv[13];
-  double ez = mv[2] * p.x + mv[6] * p.y + mv[10] * p.z + mv[14];
-  double ew = mv[3] * p.x + mv[7] * p.y + mv[11] * p.z + mv[15];
-
-  const double* pr = g_camProjection;
-  double cx = pr[0] * ex + pr[4] * ey + pr[8] * ez + pr[12] * ew;
-  double cy = pr[1] * ex + pr[5] * ey + pr[9] * ez + pr[13] * ew;
-  double cw = pr[3] * ex + pr[7] * ey + pr[11] * ez + pr[15] * ew;
-  if (cw <= 1e-4) return false;
-
-  double ndcX = cx / cw, ndcY = cy / cw;
-  outX = (ndcX * 0.5 + 0.5) * g_camViewport[2] + g_camViewport[0];
-  outY = (1.0 - (ndcY * 0.5 + 0.5)) * g_camViewport[3] + g_camViewport[1]; // NDC +Y is up, screen +Y is down
-  return true;
-}
-
-static void drawDamagePopups() {
-  for (const DamagePopup& p : g_damagePopups) {
-    double sx, sy;
-    if (!worldToScreen(p.position, sx, sy)) continue;
-    char buf[16];
-    std::snprintf(buf, sizeof(buf), "-%.1f", p.amount);
-    double fade = clampd(p.timer / DAMAGE_POPUP_LIFETIME, 0, 1);
-    double tw = textWidth(g_fontButton, buf);
-    // Drifts up slightly over its lifetime, fading out.
-    double ty = sy - (1.0 - fade) * 16;
-    drawText(g_fontButton, sx - tw / 2 + 1, ty + 1, buf, 0, 0, 0, fade * 0.8); // shadow
-    drawText(g_fontButton, sx - tw / 2, ty, buf, 1, 0.25, 0.25, fade);
+  // Bubbles: only shown while actually short of breath, same "row only
+  // appears when it means something" convention vanilla's own HUD uses.
+  if (g_player->oxygen < g_player->maxOxygen) {
+    int pips = g_player->maxOxygen / 2;
+    double bubbleRowY = rowY - ROW_GAP - STAT_ICON;
+    for (int i = 0; i < pips; i++) {
+      double ix = drumstickRowX + i * (STAT_ICON + STAT_GAP);
+      drawRect(ix, bubbleRowY, STAT_ICON, STAT_ICON, 0.12, 0.12, 0.12, 0.55);
+      drawRectOutline(ix, bubbleRowY, STAT_ICON, STAT_ICON, 1, 0, 0, 0, 0.6);
+      int pipValue = g_player->oxygen - i * 2;
+      double fraction = pipValue >= 2 ? 1.0 : pipValue == 1 ? 0.5 : 0.0;
+      drawBubbleIcon(ix, bubbleRowY, STAT_ICON, fraction);
+    }
   }
 }
 
@@ -1588,13 +1642,6 @@ static void render() {
 
   if (g_world && g_player) {
     setup3D();
-    // Grab the camera transform right as it's set — every world-space point
-    // drawn this frame goes through exactly this modelview/projection, so
-    // this is what worldToScreen() needs to place damage-popup text later
-    // in the 2D HUD pass.
-    glGetDoublev(GL_MODELVIEW_MATRIX, g_camModelview);
-    glGetDoublev(GL_PROJECTION_MATRIX, g_camProjection);
-    glGetIntegerv(GL_VIEWPORT, g_camViewport);
     glEnable(GL_TEXTURE_2D);
     glBindTexture(GL_TEXTURE_2D, atlasTextureId());
 
@@ -1770,7 +1817,6 @@ static void render() {
   if (g_world && g_hotbar && !g_invOpen && !g_chestOpen && !g_fullMapOpen) g_hotbar->draw(g_winW, g_winH);
   if (g_state == GameState::Playing && !g_invOpen && !g_chestOpen && !g_fullMapOpen) {
     drawHealthHunger();
-    drawDamagePopups();
     drawCrosshair();
     drawInteractPrompt();
     drawMinimap(g_winW, g_winH, g_player ? g_player->yaw : 0.0, g_boats);
@@ -1853,6 +1899,7 @@ static void updateFrame(double dt) {
         g_player->update(dt, *g_world, getMoveInput());
         checkTrapdoorTrigger(dt);
       }
+      if (g_player->dead) killPlayer();
     }
 
     // limb animation: gait advances with actual ground movement; the cycle
@@ -1872,7 +1919,33 @@ static void updateFrame(double dt) {
     worldMapUpdate(*g_world, g_player->position.x, g_player->position.z);
     minimapUpdate(*g_world, g_player->position.x, g_player->position.z);
 
-    for (Animal& a : g_animals) updateAnimal(a, *g_world, dt);
+    for (Animal& a : g_animals) updateAnimal(a, *g_world, dt, g_player->position);
+
+    // Predators that are provoked and close enough bite back, on their own
+    // cooldown — the flip side of the player's own swing above, resolved
+    // here (not in animal.cpp) for the same reason tryMine() resolves
+    // player-vs-animal combat here rather than in updateAnimal.
+    for (Animal& a : g_animals) {
+      if (a.dying || !a.provoked || !ANIMAL_SPECIES[a.species].predator) {
+        a.attackCooldown = 0;
+        continue;
+      }
+      if (a.attackCooldown > 0) {
+        a.attackCooldown -= dt;
+        continue;
+      }
+      const double BITE_RANGE = 1.3;
+      double dx = a.position.x - g_player->position.x, dz = a.position.z - g_player->position.z;
+      if (dx * dx + dz * dz > BITE_RANGE * BITE_RANGE) continue;
+      int dmg = std::max(1, (int)std::lround(attackPowerFor(a.species)));
+      g_player->health = std::max(0, g_player->health - dmg);
+      a.attackCooldown = 1.2;
+      playHitSound();
+      if (g_player->health <= 0) {
+        g_player->dead = true;
+        killPlayer();
+      }
+    }
 
     // Death sequence: count down the lie-down, then grant meat and remove.
     for (size_t i = 0; i < g_animals.size();) {
@@ -1891,17 +1964,6 @@ static void updateFrame(double dt) {
       i++;
     }
 
-    // Floating damage numbers fade out and go away on their own.
-    for (size_t i = 0; i < g_damagePopups.size();) {
-      g_damagePopups[i].timer -= dt;
-      if (g_damagePopups[i].timer <= 0) {
-        g_damagePopups[i] = g_damagePopups.back();
-        g_damagePopups.pop_back();
-        continue;
-      }
-      i++;
-    }
-
     // Dropped items: fall/settle physics only — picking one up is a
     // deliberate E press now (tryPickUpItem), not automatic on approach.
     for (DroppedItem& it : g_droppedItems) updateDroppedItem(it, *g_world, dt);
@@ -1915,6 +1977,50 @@ static void updateFrame(double dt) {
     }
 
     for (Fish& f : g_fishes) updateFish(f, *g_world, dt, g_player->position);
+
+    // A provoked shark that's close enough bites back, on its own cooldown
+    // — the water counterpart of the land-predator loop above.
+    for (Fish& f : g_fishes) {
+      if (f.dying || !f.provoked || FISH_SPECIES[f.species].attackPower <= 0) {
+        f.attackCooldown = 0;
+        continue;
+      }
+      if (f.attackCooldown > 0) {
+        f.attackCooldown -= dt;
+        continue;
+      }
+      const double SHARK_BITE_RANGE = 2.0;
+      double dx = f.position.x - g_player->position.x, dy = f.position.y - g_player->position.y,
+             dz = f.position.z - g_player->position.z;
+      if (dx * dx + dy * dy + dz * dz > SHARK_BITE_RANGE * SHARK_BITE_RANGE) continue;
+      int dmg = std::max(1, (int)std::lround(FISH_SPECIES[f.species].attackPower));
+      g_player->health = std::max(0, g_player->health - dmg);
+      f.attackCooldown = 1.2;
+      playHitSound();
+      if (g_player->health <= 0) {
+        g_player->dead = true;
+        killPlayer();
+      }
+    }
+
+    // Death sequence: count down the lie-still, then grant the species' raw
+    // fish item and remove — same convention as the animal loop above.
+    for (size_t i = 0; i < g_fishes.size();) {
+      Fish& f = g_fishes[i];
+      if (f.dying) {
+        f.deathTimer -= dt;
+        if (f.deathTimer <= 0) {
+          if (g_inventory && g_hotbar) {
+            g_inventory->collect(*g_hotbar, fishItemFor(f.species), 1);
+          }
+          g_fishes[i] = g_fishes.back();
+          g_fishes.pop_back();
+          continue; // don't advance i — a new element just landed here
+        }
+      }
+      i++;
+    }
+
     g_fishSpawnTimer += dt;
     const double FISH_SPAWN_INTERVAL = 3.0;
     if (g_fishSpawnTimer >= FISH_SPAWN_INTERVAL) {

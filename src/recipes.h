@@ -83,6 +83,17 @@ enum CraftItem : uint8_t {
   // at full hunger.
   ITEM_HEALTH_POTION_SMALL, // 3 poppies, +2 hearts
   ITEM_HEALTH_POTION_BIG,   // 6 poppies, +4 hearts
+  // --- fish --------------------------------------------------------------
+  // Not CRAFT_RECIPES entries, same as the meats and fruit above: dropped
+  // when a fish (fish.h) is killed, see fishItemFor. Each species gets its
+  // own item/icon (item_art.cpp) rather than sharing one "raw fish" stack,
+  // and unlike raw meat these eat straight away — isEatableFood, no cook
+  // step — same as a fruit.
+  ITEM_RAW_COD,
+  ITEM_RAW_SALMON,
+  ITEM_RAW_PUFFERFISH,
+  ITEM_RAW_TROPICAL_FISH,
+  ITEM_RAW_SHARK, // dropped by the shark (fish.h) — rare, open-water only
   CRAFT_ITEM_COUNT,
 };
 
