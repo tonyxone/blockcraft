@@ -48,6 +48,11 @@ const uint32_t CHERRY_RED = 0xb81c3a, CHERRY_RED_D = 0x821229;
 const uint32_t CHERRY_HI = 0xe04060, CHERRY_HI_D = 0xb02a48;
 const uint32_t ORANGE_BASE = 0xf5921e, ORANGE_BASE_D = 0xc9720f;
 const uint32_t ORANGE_HI = 0xffb84f, ORANGE_HI_D = 0xe89a35;
+const uint32_t POTION_CORK = 0x8a5a2e, POTION_CORK_D = 0x5c3a1a;
+const uint32_t POTION_GLASS = 0xdfeef7, POTION_GLASS_D = 0xb8d4e6;
+const uint32_t POTION_HI = 0xff5b52, POTION_HI_D = 0xe0362c;
+const uint32_t POTION_RED = 0xd81f28, POTION_RED_D = 0x9c1418;
+const uint32_t POTION_DARK = 0x8f1014, POTION_DARK_D = 0x600a0d;
 
 // --- tool shapes -----------------------------------------------------------
 // 'H' head / business end, 'S' shaft. Shared between material tiers: a wooden
@@ -645,6 +650,51 @@ const char* const CHERRY_ROWS[TILE_PX] = {
   "................",
 };
 
+// Tall and narrow: cork, thin neck, a slim shouldered body tapering to a
+// point at the bottom — the familiar single-serving potion bottle
+// (minecraft.wiki). 'C' cork, 'G' glass, 'H' liquid highlight, 'M' liquid
+// body, 'D' liquid in shadow near the bottom.
+const char* const POTION_SMALL_ROWS[TILE_PX] = {
+  "................",
+  ".......CC.......",
+  ".......CC.......",
+  "......GGGG......",
+  "......GGGG......",
+  ".....GHMMMG.....",
+  "....GHMMMMMG....",
+  "....GMMMMMMG....",
+  "....GDDDDDDG....",
+  "....GDDDDDDG....",
+  ".....GDDDDG.....",
+  "......GDDG......",
+  ".......GG.......",
+  "................",
+  "................",
+  "................",
+};
+
+// Short and wide: a wider cork over a round, squat flask — deliberately a
+// different silhouette from the small bottle above (not just a bigger
+// version of it), the way a splash potion reads apart from a regular one.
+const char* const POTION_BIG_ROWS[TILE_PX] = {
+  "................",
+  "......CCCC......",
+  "......CCCC......",
+  ".....GGGGGG.....",
+  "....GHMMMMMG....",
+  "...GHMMMMMMMG...",
+  "..GHMMMMMMMMMG..",
+  "..GMMMMMMMMMMG..",
+  "..GDDDDDDDDDDG..",
+  "..GDDDDDDDDDDG..",
+  "...GDDDDDDDDG...",
+  "....GDDDDDDG....",
+  ".....GDDDDG.....",
+  "......GGGG......",
+  "................",
+  "................",
+};
+
 // --- world textures for placed crafted blocks ------------------------------
 // These cover the WHOLE tile: a block face with holes in it would show the
 // world through itself. (The outline pass only fires on transparent pixels
@@ -872,6 +922,17 @@ const ItemArt ART_CHERRY = {
                 { 'L', LEAF_GREEN, LEAF_GREEN_D } }
 };
 
+const ItemArt ART_POTION_SMALL = {
+  POTION_SMALL_ROWS, { { 'C', POTION_CORK, POTION_CORK_D }, { 'G', POTION_GLASS, POTION_GLASS_D },
+                       { 'H', POTION_HI, POTION_HI_D }, { 'M', POTION_RED, POTION_RED_D },
+                       { 'D', POTION_DARK, POTION_DARK_D } }
+};
+const ItemArt ART_POTION_BIG = {
+  POTION_BIG_ROWS, { { 'C', POTION_CORK, POTION_CORK_D }, { 'G', POTION_GLASS, POTION_GLASS_D },
+                     { 'H', POTION_HI, POTION_HI_D }, { 'M', POTION_RED, POTION_RED_D },
+                     { 'D', POTION_DARK, POTION_DARK_D } }
+};
+
 // World textures for the placed blocks.
 const ItemArt BLK_PLANKS = { BLK_PLANKS_ROWS, { { 'M', WOOD, WOOD_D }, { 'D', DARKWOOD, DARKWOOD_D } } };
 const ItemArt BLK_BRICKS = { BLK_BRICKS_ROWS, { { 'M', STONE, STONE_D }, { 'D', 0x6f6f73, 0x4f4f53 } } };
@@ -951,6 +1012,8 @@ const ItemArt* itemArtForTile(int tile) {
     case TILE_PEAR: return &ART_PEAR;
     case TILE_CHERRY: return &ART_CHERRY;
     case TILE_ORANGE: return &ART_ORANGE;
+    case TILE_POTION_SMALL: return &ART_POTION_SMALL;
+    case TILE_POTION_BIG: return &ART_POTION_BIG;
     case TILE_WOOD_PICKAXE: return &ART_WOOD_PICKAXE;
     case TILE_STONE_PICKAXE: return &ART_STONE_PICKAXE;
     case TILE_WOOD_AXE: return &ART_WOOD_AXE;

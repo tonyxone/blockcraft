@@ -70,6 +70,12 @@ public:
   // right after each call.
   int pendingEatAmount = 0;
 
+  // Same hand-off, for health potions: how many HEALTH points (not hearts —
+  // see healthPotionHeal in recipes.h) the last drink gesture just earned.
+  // Inventory doesn't know about Player/health either, so the caller applies
+  // it and resets this to 0 right after each call, same as pendingEatAmount.
+  int pendingHealAmount = 0;
+
   // Right-click context menu on a tool/weapon/food slot: Equip (tools) or
   // Use (cooked meat) on top, Drop below. Opened by right-clicking an
   // eligible, occupied slot; closed by any subsequent click, whether or not
