@@ -529,6 +529,15 @@ static void applyPendingEat() {
   g_inventory->pendingEatAmount = 0;
 }
 
+// Same hand-off as applyPendingEat, for health potions: pendingHealAmount is
+// HEALTH points already (see healthPotionHeal), not hunger, so it applies
+// straight to Player::health instead.
+static void applyPendingHeal() {
+  if (!g_inventory || !g_player || g_inventory->pendingHealAmount <= 0) return;
+  g_player->health = std::min(g_player->maxHealth, g_player->health + g_inventory->pendingHealAmount);
+  g_inventory->pendingHealAmount = 0;
+}
+
 // The third eat gesture: right-click while cooked meat or a fruit is
 // selected in the hotbar. Checked ahead of tryPlace()'s normal build logic,
 // since none of these are placeable anyway and eating shouldn't need a valid
@@ -540,6 +549,21 @@ static bool tryEatSelected() {
   slot.count--;
   if (slot.count <= 0) { slot.blockId = -1; slot.count = 0; }
   g_player->hunger = std::min(g_player->maxHunger, g_player->hunger + 1);
+  return true;
+}
+
+// Right-click while a health potion is selected: drinks one, healing
+// directly rather than feeding — gated on health (not hunger) being short of
+// full, so an empty-handed heal attempt at full health falls through to
+// tryPlace()'s normal build logic instead of silently eating the potion.
+static bool tryDrinkSelected() {
+  if (!g_hotbar || !g_player) return false;
+  int heal = healthPotionHeal((uint8_t)g_hotbar->selectedBlockId());
+  if (heal <= 0 || g_player->health >= g_player->maxHealth) return false;
+  Hotbar::Slot& slot = g_hotbar->slots[g_hotbar->selected];
+  slot.count--;
+  if (slot.count <= 0) { slot.blockId = -1; slot.count = 0; }
+  g_player->health = std::min(g_player->maxHealth, g_player->health + heal);
   return true;
 }
 
@@ -955,6 +979,7 @@ static bool placementOverlapsPlayer(int px, int py, int pz) {
 static void tryPlace() {
   if (!g_world || !g_player) return;
   if (tryEatSelected()) return;
+  if (tryDrinkSelected()) return;
   if (tryPlaceBoat()) return;
   g_armSwingTimer = ARM_SWING_TIME;
   g_swingLeftHand = true; // building is the left hand
@@ -2060,6 +2085,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         } else if (g_invOpen) {
           g_inventory->onMouseDown(*g_hotbar, g_mouseX, g_mouseY, false, g_winW, g_winH);
           applyPendingEat();
+          applyPendingHeal();
           applyPendingDrop();
         } else if (g_chestOpen) {
           g_inventory->chestMouseDown(g_world->chests[{ g_chestX, g_chestY, g_chestZ }], *g_hotbar,
@@ -2076,6 +2102,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
       if (g_state == GameState::Playing && g_invOpen && g_inventory) {
         g_inventory->onMouseUp(*g_hotbar, g_mouseX, g_mouseY, false, g_winW, g_winH);
         applyPendingEat();
+        applyPendingHeal();
         applyPendingDrop();
       }
       if (g_state == GameState::Playing && g_chestOpen && g_inventory) {
@@ -2094,6 +2121,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         } else if (g_invOpen) {
           g_inventory->onMouseDown(*g_hotbar, g_mouseX, g_mouseY, true, g_winW, g_winH);
           applyPendingEat();
+          applyPendingHeal();
           applyPendingDrop();
         } else if (g_chestOpen) {
           g_inventory->chestMouseDown(g_world->chests[{ g_chestX, g_chestY, g_chestZ }], *g_hotbar,
@@ -2106,6 +2134,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
       if (g_state == GameState::Playing && g_invOpen && g_inventory) {
         g_inventory->onMouseUp(*g_hotbar, g_mouseX, g_mouseY, true, g_winW, g_winH);
         applyPendingEat();
+        applyPendingHeal();
         applyPendingDrop();
       }
       if (g_state == GameState::Playing && g_chestOpen && g_inventory) {

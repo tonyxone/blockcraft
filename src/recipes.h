@@ -76,6 +76,13 @@ enum CraftItem : uint8_t {
   ITEM_PEAR,
   ITEM_CHERRY,
   ITEM_ORANGE,
+  // --- potions ---------------------------------------------------------
+  // Brewed from poppies (the red flower) alone, no crafting table needed —
+  // see CRAFT_RECIPES. Unlike the food above, drinking one restores HEALTH
+  // directly rather than hunger (healthPotionHeal below), so it works even
+  // at full hunger.
+  ITEM_HEALTH_POTION_SMALL, // 3 poppies, +2 hearts
+  ITEM_HEALTH_POTION_BIG,   // 6 poppies, +4 hearts
   CRAFT_ITEM_COUNT,
 };
 
@@ -124,6 +131,11 @@ const char* craftItemName(uint8_t id);
 // (right-click-selected, double-click, drag-to-preview) in main.cpp and
 // inventory.cpp, so a new food only needs adding here to work everywhere.
 bool isEatableFood(uint8_t id);
+
+// Health points (out of the 20-point scale, 2 per heart — see Player in
+// player.h) a health potion restores when drunk, or 0 if `id` isn't one.
+// Separate from isEatableFood/hunger: potions heal HEALTH directly.
+int healthPotionHeal(uint8_t id);
 
 // The distinct ingredients a recipe needs, with how many grid cells each
 // fills — "1 wood + 2 stone" rather than the raw 3x3 pattern. Written into

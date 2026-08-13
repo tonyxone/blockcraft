@@ -128,6 +128,15 @@ const Recipe CRAFT_RECIPES[] = {
   // than 2, for +1 attack power) — by request, with its own hand-drawn icon.
   { "The First Sword", ITEM_SWORD, 1, false,
     { "C..", "C..", "CS." }, { { 'C', BLOCK_STONE }, { 'S', ITEM_STICK } } },
+
+  // --- potions -----------------------------------------------------------
+  // Shapeless: any 3 (or 6) poppies anywhere in the grid, no crafting table
+  // step beyond the grid itself needed.
+  { "Small Health Potion", ITEM_HEALTH_POTION_SMALL, 1, true,
+    { "FFF", "...", "..." }, { { 'F', BLOCK_FLOWER_POPPY } } },
+
+  { "Big Health Potion", ITEM_HEALTH_POTION_BIG, 1, true,
+    { "FFF", "FFF", "..." }, { { 'F', BLOCK_FLOWER_POPPY } } },
 };
 
 const int CRAFT_RECIPE_COUNT = (int)(sizeof(CRAFT_RECIPES) / sizeof(CRAFT_RECIPES[0]));
@@ -333,6 +342,8 @@ const char* craftItemName(uint8_t id) {
     case ITEM_PEAR: return "pear";
     case ITEM_CHERRY: return "cherry";
     case ITEM_ORANGE: return "orange";
+    case ITEM_HEALTH_POTION_SMALL: return "small health potion";
+    case ITEM_HEALTH_POTION_BIG: return "big health potion";
     default: return "?";
   }
 }
@@ -348,6 +359,14 @@ bool isEatableFood(uint8_t id) {
       return true;
     default:
       return false;
+  }
+}
+
+int healthPotionHeal(uint8_t id) {
+  switch (id) {
+    case ITEM_HEALTH_POTION_SMALL: return 4; // 2 hearts
+    case ITEM_HEALTH_POTION_BIG: return 8;   // 4 hearts
+    default: return 0;
   }
 }
 
@@ -393,6 +412,8 @@ int craftItemTile(uint8_t id) {
     case ITEM_PEAR: return TILE_PEAR;
     case ITEM_CHERRY: return TILE_CHERRY;
     case ITEM_ORANGE: return TILE_ORANGE;
+    case ITEM_HEALTH_POTION_SMALL: return TILE_POTION_SMALL;
+    case ITEM_HEALTH_POTION_BIG: return TILE_POTION_BIG;
     default: return TILE_NONE;
   }
 }

@@ -107,6 +107,12 @@ enum Tile : int {
   TILE_PEAR,
   TILE_CHERRY,
   TILE_ORANGE,
+  // Health potions, brewed from poppies (the red flower) — see
+  // ITEM_HEALTH_POTION_SMALL/BIG in recipes.h. Two tiles, not tiers of one
+  // shape: the small bottle is tall and narrow, the big one a short wide
+  // flask, so the two read apart even at slot size (item_art.cpp).
+  TILE_POTION_SMALL,
+  TILE_POTION_BIG,
 
   // World textures for the crafted goods that can be placed. Separate from
   // the slot icons above: an icon is a small shape on a transparent field,

@@ -257,7 +257,13 @@ bool occupied(const Hotbar::Slot& s) { return s.blockId >= 0 && s.count > 0; }
 // isEatableFood set restores hunger anywhere else in the game (double-click,
 // drag-to-preview, right-click-in-world), so the menu matches that.
 bool isFoodItem(int id) { return isEatableFood((uint8_t)id) || id == ITEM_RAW_MEAT; }
-bool isDroppableItem(int id) { return id >= 0 && (isToolItem((uint8_t)id) || isFoodItem(id)); }
+// A health potion: its own Use-button case, alongside food, since it shares
+// every gesture (right-click menu, double-click, drag-to-preview) but heals
+// HEALTH instead of restoring hunger (see pendingHealAmount).
+bool isPotionItem(int id) { return id >= 0 && healthPotionHeal((uint8_t)id) > 0; }
+bool isDroppableItem(int id) {
+  return id >= 0 && (isToolItem((uint8_t)id) || isFoodItem(id) || isPotionItem(id));
+}
 
 // Context menu geometry: one button per row, Equip/Use on top (only for
 // items that have one) then Drop. Position is clamped to the window so a
@@ -716,8 +722,9 @@ void Inventory::drawContents(const Hotbar& hotbar, int winW, int winH,
   // is effectively modal while open (see onMouseDown).
   if (contextMenuSlot) {
     bool isFood = isEatableFood((uint8_t)contextMenuSlot->blockId);
+    bool isPotion = isPotionItem(contextMenuSlot->blockId);
     bool isTool = isToolItem((uint8_t)contextMenuSlot->blockId);
-    bool hasTopButton = isFood || isTool;
+    bool hasTopButton = isFood || isPotion || isTool;
     double mnx, mny, mnw, mnh;
     contextMenuRect(contextMenuX, contextMenuY, winW, winH, hasTopButton, mnx, mny, mnw, mnh);
 
@@ -838,8 +845,9 @@ void Inventory::onMouseDown(Hotbar& hotbar, double mx, double my, bool rightButt
     Hotbar::Slot* menuSlot = contextMenuSlot;
     contextMenuSlot = nullptr;
     bool isFood = isEatableFood((uint8_t)menuSlot->blockId);
+    bool isPotion = isPotionItem(menuSlot->blockId);
     bool isTool = isToolItem((uint8_t)menuSlot->blockId);
-    bool hasTopButton = isFood || isTool;
+    bool hasTopButton = isFood || isPotion || isTool;
     double mnx, mny, mnw, mnh;
     contextMenuRect(contextMenuX, contextMenuY, winW, winH, hasTopButton, mnx, mny, mnw, mnh);
 
@@ -847,9 +855,11 @@ void Inventory::onMouseDown(Hotbar& hotbar, double mx, double my, bool rightButt
       if (isTool) {
         std::swap(mainHand, *menuSlot); // whatever was equipped comes back out
       } else {
+        int id = menuSlot->blockId;
         menuSlot->count--;
         if (menuSlot->count <= 0) clearSlot(*menuSlot);
-        pendingEatAmount = 1;
+        if (isPotion) pendingHealAmount = healthPotionHeal((uint8_t)id);
+        else pendingEatAmount = 1;
       }
       return;
     }
@@ -926,14 +936,16 @@ void Inventory::onMouseDown(Hotbar& hotbar, double mx, double my, bool rightButt
     lastClickSlot = nullptr; // a third click starts a fresh pair
     if (sendOneToCraft(craft, *target)) return;
   }
-  // Double-click a food stack anywhere OUTSIDE the Craft tab (so it can
-  // never collide with the shortcut just above) to eat one.
+  // Double-click a food or potion stack anywhere OUTSIDE the Craft tab (so it
+  // can never collide with the shortcut just above) to eat/drink one.
   if (doubleClick && tab != INV_TAB_CRAFT && !occupied(held) && occupied(*target) &&
-      isEatableFood((uint8_t)target->blockId)) {
+      (isEatableFood((uint8_t)target->blockId) || isPotionItem(target->blockId))) {
     lastClickSlot = nullptr;
+    int id = target->blockId;
     target->count--;
     if (target->count <= 0) clearSlot(*target);
-    pendingEatAmount = 1;
+    if (isPotionItem(id)) pendingHealAmount = healthPotionHeal((uint8_t)id);
+    else pendingEatAmount = 1;
     return;
   }
   lastClickSlot = target;
@@ -994,14 +1006,17 @@ void Inventory::onMouseUp(Hotbar& hotbar, double mx, double my, bool rightButton
   dragSrc = nullptr;
   if (!occupied(held)) return;
 
-  // Dragging any food onto the Player-tab character preview eats the WHOLE
-  // held stack at once — a bigger gesture than the double-click (eats one)
-  // or right-click (eats one) shortcuts, matching "feed yourself" being a
-  // more deliberate action than a quick nibble.
+  // Dragging any food or potion onto the Player-tab character preview
+  // consumes the WHOLE held stack at once — a bigger gesture than the
+  // double-click (one) or right-click (one) shortcuts, matching "feed/dose
+  // yourself" being a more deliberate action than a quick nibble.
   double px_, py_, pw_, ph_;
-  if (isEatableFood((uint8_t)held.blockId) && previewRect(winW, winH, px_, py_, pw_, ph_) &&
+  bool isPotionHeld = isPotionItem(held.blockId);
+  if ((isEatableFood((uint8_t)held.blockId) || isPotionHeld) &&
+      previewRect(winW, winH, px_, py_, pw_, ph_) &&
       mx >= px_ && mx < px_ + pw_ && my >= py_ && my < py_ + ph_) {
-    pendingEatAmount = held.count;
+    if (isPotionHeld) pendingHealAmount = healthPotionHeal((uint8_t)held.blockId) * held.count;
+    else pendingEatAmount = held.count;
     clearSlot(held);
     return;
   }
