@@ -349,6 +349,7 @@ const char* craftItemName(uint8_t id) {
     case ITEM_RAW_PUFFERFISH: return "raw pufferfish";
     case ITEM_RAW_TROPICAL_FISH: return "raw tropical fish";
     case ITEM_RAW_SHARK: return "raw shark";
+    case ITEM_COOKED_FISH: return "cooked fish";
     default: return "?";
   }
 }
@@ -356,11 +357,21 @@ const char* craftItemName(uint8_t id) {
 bool isEatableFood(uint8_t id) {
   switch (id) {
     case ITEM_COOKED_MEAT:
+    case ITEM_COOKED_FISH:
     case ITEM_APPLE:
     case ITEM_PEACH:
     case ITEM_PEAR:
     case ITEM_CHERRY:
     case ITEM_ORANGE:
+      return true;
+    default:
+      return false;
+  }
+}
+
+bool isUnsafeRawFood(uint8_t id) {
+  switch (id) {
+    case ITEM_RAW_MEAT:
     case ITEM_RAW_COD:
     case ITEM_RAW_SALMON:
     case ITEM_RAW_PUFFERFISH:
@@ -369,6 +380,20 @@ bool isEatableFood(uint8_t id) {
       return true;
     default:
       return false;
+  }
+}
+
+int cookedItemFor(uint8_t rawId) {
+  switch (rawId) {
+    case ITEM_RAW_MEAT: return ITEM_COOKED_MEAT;
+    case ITEM_RAW_COD:
+    case ITEM_RAW_SALMON:
+    case ITEM_RAW_PUFFERFISH:
+    case ITEM_RAW_TROPICAL_FISH:
+    case ITEM_RAW_SHARK:
+      return ITEM_COOKED_FISH;
+    default:
+      return -1;
   }
 }
 
@@ -429,6 +454,7 @@ int craftItemTile(uint8_t id) {
     case ITEM_RAW_PUFFERFISH: return TILE_RAW_PUFFERFISH;
     case ITEM_RAW_TROPICAL_FISH: return TILE_RAW_TROPICAL_FISH;
     case ITEM_RAW_SHARK: return TILE_RAW_SHARK;
+    case ITEM_COOKED_FISH: return TILE_COOKED_FISH;
     default: return TILE_NONE;
   }
 }

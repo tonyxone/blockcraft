@@ -549,13 +549,17 @@ void drawPlayerModel(const Player& player, const PlayerAnim& anim) {
 
   // Swimming (touching water, not riding a boat): legs trail together and
   // arms sweep back, the pose a near-horizontal float actually looks like
-  // rather than the standing walk pose tipped on its side.
+  // rather than the standing walk pose tipped on its side. A slow alternating
+  // kick/stroke (swimPhase, always advancing — see PlayerAnim) keeps the
+  // limbs moving instead of holding a single frozen pose the whole time.
   bool swimPose = player.swimming && !anim.boating;
   if (swimPose) {
-    legL = 6.0;
-    legR = 6.0;
-    armL = -12.0;
-    armR = -12.0;
+    double kick = std::sin(anim.swimPhase) * 18.0;
+    legL = 8.0 + kick;
+    legR = 8.0 - kick;
+    double stroke = std::sin(anim.swimPhase + PI) * 12.0;
+    armL = -12.0 + stroke;
+    armR = -12.0 - stroke;
   }
 
   glPushMatrix();
@@ -573,9 +577,10 @@ void drawPlayerModel(const Player& player, const PlayerAnim& anim) {
   } else if (swimPose) {
     // Same rigid-rotation trick as the boat's seat offset, just tipping the
     // whole body forward around a waist-height pivot instead of dropping it
-    // — "face down float" (the request's own words) rather than standing.
+    // — belly toward the water, head leading forward (a NEGATIVE angle here:
+    // positive tipped the chest up instead, a face-up float).
     glTranslated(0, 12.0, 0);
-    glRotated(75.0, 1, 0, 0);
+    glRotated(-75.0, 1, 0, 0);
     glTranslated(0, -12.0, 0);
   }
 

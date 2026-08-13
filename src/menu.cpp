@@ -211,11 +211,6 @@ void Menu::draw(int winW, int winH, double mouseX, double mouseY) {
                 { "Main Menu", MenuAction::QuitToMenu } ,
                 { "Quit", MenuAction::Quit }};;
       break;
-    case MenuPanel::Dead:
-      title = "Dead";
-      items = { { "Respawn", MenuAction::Respawn },
-                { "Main Menu", MenuAction::QuitToMenu } };
-      break;
     case MenuPanel::SettingsPanel:
       title = "Settings";
       items = { { "Back", MenuAction::Back } };
@@ -263,11 +258,9 @@ void Menu::draw(int winW, int winH, double mouseX, double mouseY) {
   double y = (winH - h) / 2;
   double cx = winW / 2.0;
 
-  // --- title --- (red on the death screen, white everywhere else)
-  bool isDead = panel == MenuPanel::Dead;
-  double titleR = isDead ? 0.85 : 1, titleG = isDead ? 0.12 : 1, titleB = isDead ? 0.12 : 1;
+  // --- title ---
   drawText(g_fontTitle, cx - textWidth(g_fontTitle, title) / 2 + 2, y + 2, title, 0, 0, 0, 1);
-  drawText(g_fontTitle, cx - textWidth(g_fontTitle, title) / 2, y, title, titleR, titleG, titleB, 1);
+  drawText(g_fontTitle, cx - textWidth(g_fontTitle, title) / 2, y, title, 1, 1, 1, 1);
   y += titleH + TITLE_MARGIN;
 
   auto drawButton = [&](const char* label, MenuAction action) {

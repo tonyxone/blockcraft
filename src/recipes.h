@@ -85,15 +85,18 @@ enum CraftItem : uint8_t {
   ITEM_HEALTH_POTION_BIG,   // 6 poppies, +4 hearts
   // --- fish --------------------------------------------------------------
   // Not CRAFT_RECIPES entries, same as the meats and fruit above: dropped
-  // when a fish (fish.h) is killed, see fishItemFor. Each species gets its
-  // own item/icon (item_art.cpp) rather than sharing one "raw fish" stack,
-  // and unlike raw meat these eat straight away — isEatableFood, no cook
-  // step — same as a fruit.
+  // when a fish (fish.h) is killed, see fishItemFor. Each raw species gets
+  // its own item/icon (item_art.cpp); all of them cook into the single
+  // ITEM_COOKED_FISH below (the R-key cook action, same as raw meat), and
+  // eating any of them RAW — like raw meat — costs health instead of
+  // restoring hunger (isUnsafeRawFood): cooking first is how you actually
+  // want to eat what you catch.
   ITEM_RAW_COD,
   ITEM_RAW_SALMON,
   ITEM_RAW_PUFFERFISH,
   ITEM_RAW_TROPICAL_FISH,
   ITEM_RAW_SHARK, // dropped by the shark (fish.h) — rare, open-water only
+  ITEM_COOKED_FISH,
   CRAFT_ITEM_COUNT,
 };
 
@@ -138,10 +141,22 @@ const Recipe* findRecipeByCount(const uint8_t items[9], const int counts[9],
 const char* craftItemName(uint8_t id);
 
 // True for any item that restores hunger just by eating it directly — cooked
-// meat and every fruit — the one gate shared by all three eat gestures
-// (right-click-selected, double-click, drag-to-preview) in main.cpp and
-// inventory.cpp, so a new food only needs adding here to work everywhere.
+// meat, cooked fish and every fruit — the one gate shared by all three eat
+// gestures (right-click-selected, double-click, drag-to-preview) in main.cpp
+// and inventory.cpp, so a new food only needs adding here to work everywhere.
 bool isEatableFood(uint8_t id);
+
+// True for raw meat and every raw fish species: edible, but eating one
+// straight (right-click-selected — see main.cpp's tryEatRawUnsafe) costs
+// health instead of restoring hunger, same "cook it first" incentive real
+// food safety gives raw meat/fish.
+bool isUnsafeRawFood(uint8_t id);
+
+// The cooked item raw meat/fish becomes at a heat source (main.cpp's R-key
+// cook action), or -1 if `id` isn't cookable. Every raw fish species cooks
+// into the one ITEM_COOKED_FISH, the same way every animal's raw meat
+// already cooks into the one ITEM_COOKED_MEAT.
+int cookedItemFor(uint8_t rawId);
 
 // Health points (out of the 20-point scale, 2 per heart — see Player in
 // player.h) a health potion restores when drunk, or 0 if `id` isn't one.

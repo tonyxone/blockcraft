@@ -30,7 +30,7 @@ public:
   // Breath, vanilla's own 10-bubble scale. Drains only while the EYE (not
   // just the feet) is underwater, refills instantly at the surface, and once
   // it bottoms out at 0 costs health the same way starving does.
-  int oxygen = 10, maxOxygen = 10;
+  int oxygen = 8, maxOxygen = 8;
   double oxygenTimer = 0; // seconds since oxygen last ticked down
   double drownTimer = 0;  // seconds since health last dropped from drowning
 

@@ -72,6 +72,12 @@ const uint32_t FISH_TROPICAL_DARK = 0x8a4310, FISH_TROPICAL_DARK_D = 0x5c2c0a;
 const uint32_t FISH_SHARK_BODY = 0x5c6066, FISH_SHARK_BODY_D = 0x3e4145;
 const uint32_t FISH_SHARK_HI = 0x8f949c, FISH_SHARK_HI_D = 0x6f747a;
 const uint32_t FISH_SHARK_DARK = 0x2e3033, FISH_SHARK_DARK_D = 0x1c1d1f;
+// Cooked fish: the same COD_ROWS silhouette, browned like cooked meat
+// instead of any one species' raw color, since every raw fish cooks into
+// this one shared item (recipes.h's cookedItemFor).
+const uint32_t FISH_COOKED_BODY = 0x9a6a3a, FISH_COOKED_BODY_D = 0x6e4a24;
+const uint32_t FISH_COOKED_HI = 0xc99a5c, FISH_COOKED_HI_D = 0xa06a3a;
+const uint32_t FISH_COOKED_DARK = 0x5a3a1c, FISH_COOKED_DARK_D = 0x3a2410;
 
 // --- tool shapes -----------------------------------------------------------
 // 'H' head / business end, 'S' shaft. Shared between material tiers: a wooden
@@ -1094,6 +1100,11 @@ const ItemArt ART_RAW_SHARK = {
                { 'M', FISH_SHARK_BODY, FISH_SHARK_BODY_D }, { 'D', FISH_SHARK_DARK, FISH_SHARK_DARK_D },
                { 'E', SHADOW, SHADOW_D } }
 };
+const ItemArt ART_COOKED_FISH = {
+  COD_ROWS, { { 'F', FISH_COOKED_HI, FISH_COOKED_HI_D }, { 'H', FISH_COOKED_HI, FISH_COOKED_HI_D },
+             { 'M', FISH_COOKED_BODY, FISH_COOKED_BODY_D }, { 'D', FISH_COOKED_DARK, FISH_COOKED_DARK_D },
+             { 'E', SHADOW, SHADOW_D } }
+};
 
 // World textures for the placed blocks.
 const ItemArt BLK_PLANKS = { BLK_PLANKS_ROWS, { { 'M', WOOD, WOOD_D }, { 'D', DARKWOOD, DARKWOOD_D } } };
@@ -1181,6 +1192,7 @@ const ItemArt* itemArtForTile(int tile) {
     case TILE_RAW_PUFFERFISH: return &ART_RAW_PUFFERFISH;
     case TILE_RAW_TROPICAL_FISH: return &ART_RAW_TROPICAL_FISH;
     case TILE_RAW_SHARK: return &ART_RAW_SHARK;
+    case TILE_COOKED_FISH: return &ART_COOKED_FISH;
     case TILE_WOOD_PICKAXE: return &ART_WOOD_PICKAXE;
     case TILE_STONE_PICKAXE: return &ART_STONE_PICKAXE;
     case TILE_WOOD_AXE: return &ART_WOOD_AXE;

@@ -121,6 +121,7 @@ enum Tile : int {
   TILE_RAW_PUFFERFISH,
   TILE_RAW_TROPICAL_FISH,
   TILE_RAW_SHARK,
+  TILE_COOKED_FISH,
 
   // World textures for the crafted goods that can be placed. Separate from
   // the slot icons above: an icon is a small shape on a transparent field,

@@ -71,7 +71,7 @@ static HGLRC g_rc = nullptr;
 static int g_winW = 1280, g_winH = 720;
 static bool g_running = true;
 
-enum class GameState { Menu, Playing, Paused, Dead };
+enum class GameState { Menu, Playing, Paused };
 static GameState g_state = GameState::Menu;
 static bool g_thirdPerson = false; // V toggles first/third person
 
@@ -80,6 +80,7 @@ static const double ARM_SWING_TIME = 0.35; // seconds for a collect/build swing
 static double g_walkPhase = 0;   // gait cycle, advances with distance walked
 static double g_walkAmount = 0;  // smoothed 0..1 swing strength
 static double g_airAmount = 0;   // smoothed 0..1 airborne-pose blend
+static double g_swimPhase = 0;   // kick/stroke cycle, advances continuously while swimming
 static double g_armSwingTimer = 0;
 static bool g_swingLeftHand = false; // right hand collects, left hand builds
 
@@ -95,6 +96,25 @@ static double g_fishSpawnTimer = 0; // seconds since the last fish spawn mainten
 static std::vector<Boat> g_boats;
 static int g_playerBoatIndex = -1; // index into g_boats while driving, -1 when on foot
 static double g_boatRowPhase = 0;  // advances while actively rowing; drives paddle animation
+
+// A tiny heart icon that pops up over an animal's/fish's head on a hit and
+// fades after half a second — feedback that it took damage without a raw
+// number attached to it. World-space position, but drawn as flat 2D HUD
+// content (see worldToScreen) since there's no billboarded-3D machinery here.
+struct DamagePopup {
+  Vec3 position;
+  double timer;
+};
+static std::vector<DamagePopup> g_damagePopups;
+const double DAMAGE_POPUP_LIFETIME = 0.5;
+
+// Camera matrices captured once per frame right after setup3D() — the exact
+// view+projection state every world-space point was drawn with — so
+// worldToScreen() can place 2D HUD content over a 3D position without
+// needing GLU's gluProject (build.bat links no glu32.lib, and this is the
+// only place that would ever need it).
+static double g_camModelview[16], g_camProjection[16];
+static int g_camViewport[4];
 
 static bool g_invOpen = false; // inventory screen overlay (I key)
 static bool g_chestOpen = false; // chest screen overlay (E key on a chest)
@@ -194,6 +214,7 @@ static void createSession(const SaveState* save) {
 
   g_animals.clear(); // not persisted (like a furnace's lit state) — fresh each session
   g_animalSpawnTimer = 0;
+  g_damagePopups.clear();
   g_droppedItems.clear(); // dropped items don't survive a reload either
   g_fishes.clear();
   g_fishSpawnTimer = 0;
@@ -342,6 +363,10 @@ static void toggleDoor(int x, int y, int z) {
   playDoorSound(nowOpen);
 }
 
+// Also what death falls back to (health hitting 0 sets Player::dead, and
+// the per-frame check below calls this same function): the same pause
+// screen ESC opens, not a dedicated death screen — there's no respawn, so
+// Restart/Load/Main Menu are the ways forward, same as any other pause.
 static void pauseGame() {
   if (g_state != GameState::Playing) return;
   closeInventory();
@@ -350,34 +375,6 @@ static void pauseGame() {
   clearKeys();
   setCursorCaptured(false);
   g_menu.showPanel(MenuPanel::Pause);
-}
-
-// Health hit 0 (Player::update set g_player->dead): freeze the game behind
-// a red "Dead" screen, same "close panels, release the cursor" shape as
-// pauseGame(), just with nothing to resume back to — only Respawn/Main Menu.
-static void killPlayer() {
-  if (g_state != GameState::Playing) return;
-  closeInventory();
-  closeChest();
-  g_state = GameState::Dead;
-  clearKeys();
-  setCursorCaptured(false);
-  g_menu.showPanel(MenuPanel::Dead);
-}
-
-// Respawn: full health/hunger and a fresh spawn point, the same
-// spawnPositionFresh() a brand new game starts at rather than wherever the
-// player died — mirrors beginPlaying()'s own state reset at the end.
-static void respawnPlayer() {
-  if (!g_player) return;
-  g_player->position = spawnPositionFresh();
-  g_player->velocity = Vec3(0, 0, 0);
-  g_player->health = g_player->maxHealth;
-  g_player->hunger = g_player->maxHunger;
-  g_player->starveTimer = 0;
-  g_player->regenTimer = 0;
-  g_player->dead = false;
-  beginPlaying();
 }
 
 static void startNewGame() {
@@ -507,24 +504,26 @@ static bool isLitHeatSource(int x, int y, int z) {
 }
 
 // True if the player is currently looking at a lit heat source within reach
-// AND has raw meat selected — the one condition the R key's cook action and
-// prompt both gate on.
+// AND has something cookable selected (raw meat or any raw fish species —
+// see cookedItemFor) — the one condition the R key's cook action and prompt
+// both gate on.
 static bool canCookNow() {
   if (!g_world || !g_player || !g_hotbar) return false;
-  if (g_hotbar->selectedBlockId() != ITEM_RAW_MEAT) return false;
+  if (cookedItemFor((uint8_t)g_hotbar->selectedBlockId()) < 0) return false;
   RaycastHit hit;
   if (!targetedBlock(hit, MINE_REACH)) return false;
   return isLitHeatSource(hit.pos[0], hit.pos[1], hit.pos[2]);
 }
 
-// Cooks one raw meat into one cooked meat — repeatable, so pressing R
+// Cooks one raw meat/fish into its cooked form — repeatable, so pressing R
 // several times cooks a whole stack one at a time rather than all at once.
 static void tryCook() {
   if (!canCookNow()) return;
+  int cooked = cookedItemFor((uint8_t)g_hotbar->selectedBlockId());
   Hotbar::Slot& slot = g_hotbar->slots[g_hotbar->selected];
   slot.count--;
   if (slot.count <= 0) { slot.blockId = -1; slot.count = 0; }
-  if (g_inventory) g_inventory->collect(*g_hotbar, ITEM_COOKED_MEAT, 1);
+  if (g_inventory) g_inventory->collect(*g_hotbar, cooked, 1);
 }
 
 // Cooked meat restores hunger 1:1, capped at max. Two of the three eat
@@ -559,6 +558,23 @@ static bool tryEatSelected() {
   slot.count--;
   if (slot.count <= 0) { slot.blockId = -1; slot.count = 0; }
   g_player->hunger = std::min(g_player->maxHunger, g_player->hunger + 1);
+  return true;
+}
+
+// Right-click while raw meat or a raw fish is selected: eating it uncooked
+// costs health instead of restoring hunger (isUnsafeRawFood) — the
+// incentive to cook first (R at a heat source, see tryCook) rather than a
+// block on eating it raw at all. No hunger gate, unlike tryEatSelected:
+// this is never the beneficial choice, so there's no "already full" case to
+// protect against.
+static bool tryEatRawUnsafe() {
+  if (!g_hotbar || !g_player || !isUnsafeRawFood((uint8_t)g_hotbar->selectedBlockId())) return false;
+  Hotbar::Slot& slot = g_hotbar->slots[g_hotbar->selected];
+  slot.count--;
+  if (slot.count <= 0) { slot.blockId = -1; slot.count = 0; }
+  const int RAW_FOOD_HEALTH_PENALTY = 2; // one heart
+  g_player->health = std::max(0, g_player->health - RAW_FOOD_HEALTH_PENALTY);
+  if (g_player->health <= 0) g_player->dead = true;
   return true;
 }
 
@@ -786,6 +802,10 @@ static void tryMine() {
     double dmg = attackPower(weapon);
     target.health -= dmg;
     playHitSound();
+    g_damagePopups.push_back(
+        { Vec3(target.position.x, target.position.y + ANIMAL_SPECIES[target.species].height + 0.1,
+              target.position.z),
+         DAMAGE_POPUP_LIFETIME });
     // Provoked: a prey species (AnimalSpeciesDef::predator false) spends
     // this window running from the player instead of wandering; a predator
     // spends it chasing and biting back (see the per-frame loops below).
@@ -813,6 +833,8 @@ static void tryMine() {
     double dmg = attackPower(weapon);
     target.health -= dmg;
     playHitSound();
+    g_damagePopups.push_back(
+        { Vec3(target.position.x, target.position.y + 0.3, target.position.z), DAMAGE_POPUP_LIFETIME });
     // Only the shark ever does anything with this (FishSpeciesDef::
     // attackPower is 0 for every other species, see the bite loop below) —
     // harmless to set unconditionally, same as the animal provoke above.
@@ -1020,6 +1042,7 @@ static bool placementOverlapsPlayer(int px, int py, int pz) {
 static void tryPlace() {
   if (!g_world || !g_player) return;
   if (tryEatSelected()) return;
+  if (tryEatRawUnsafe()) return;
   if (tryDrinkSelected()) return;
   if (tryPlaceBoat()) return;
   g_armSwingTimer = ARM_SWING_TIME;
@@ -1280,7 +1303,6 @@ static void handleMenuAction(MenuAction action) {
     case MenuAction::Load: openLoadPanel(); break;
     case MenuAction::LoadNamed: loadNamedAndPlay(g_menu.selectedSave); break;
     case MenuAction::Resume: beginPlaying(); break;
-    case MenuAction::Respawn: respawnPlayer(); break;
     case MenuAction::Restart: startNewGame(); break;
     case MenuAction::Save: openSavePanel(); break;
     case MenuAction::ConfirmSave: confirmSaveGame(); break;
@@ -1465,6 +1487,24 @@ static void drawInteractPrompt() {
   drawText(g_fontButton, tx, ty, label, 1, 1, 1, 1);
 }
 
+// Swim controls, left-center of the screen, only while actually in the
+// water (Player::swimming) — WASD alone isn't obvious once gravity stops
+// applying and Space/C take over the vertical axis.
+static void drawSwimHint() {
+  if (!g_player || !g_player->swimming) return;
+  const char* line1 = "Space: float up";
+  const char* line2 = "C: float down";
+  const char* line3 = "WASD: swim";
+  double lineH = 21;
+  double x = 24;
+  double y = g_winH / 2.0 - lineH * 1.5;
+  for (const char* line : { line1, line2, line3 }) {
+    drawText(g_fontHint, x + 1, y + 1, line, 0, 0, 0, 1); // shadow
+    drawText(g_fontHint, x, y, line, 1, 1, 1, 0.85);
+    y += lineH;
+  }
+}
+
 // Vanilla's own 9x9 HUD icons, traced pixel-for-pixel from the sprites
 // minecraft.wiki uses in its health/hunger tables (Heart (icon).png and
 // Hunger (icon).png — the same art as the game's icons.png): a black
@@ -1480,7 +1520,7 @@ struct IconColor {
 };
 
 static void drawPixelIcon(double x, double y, double size, double fraction,
-                          const char* const* rows, const IconColor* palette) {
+                          const char* const* rows, const IconColor* palette, double alpha = 1.0) {
   if (fraction <= 0) return;
   const double CELL = size / 9.0;
   const double maxW = size * fraction;
@@ -1493,12 +1533,12 @@ static void drawPixelIcon(double x, double y, double size, double fraction,
         if (p->key == ch) { r = p->r; g = p->g; b = p->b; break; }
       }
       double w = clampd(maxW - col * CELL, 0, CELL);
-      if (w > 0) drawRect(x + col * CELL, y + row * CELL, w, CELL, r, g, b, 1);
+      if (w > 0) drawRect(x + col * CELL, y + row * CELL, w, CELL, r, g, b, alpha);
     }
   }
 }
 
-static void drawHeartIcon(double x, double y, double size, double fraction) {
+static void drawHeartIcon(double x, double y, double size, double fraction, double alpha = 1.0) {
   static const char* const ROWS[9] = {
     "..##.##..",
     ".#RR#RR#.",
@@ -1517,7 +1557,7 @@ static void drawHeartIcon(double x, double y, double size, double fraction) {
     { 'H', 1.00, 0.78, 0.78 }, // top-left shine
     { 0, 0, 0, 0 },
   };
-  drawPixelIcon(x, y, size, fraction, ROWS, PALETTE);
+  drawPixelIcon(x, y, size, fraction, ROWS, PALETTE, alpha);
 }
 
 static void drawDrumstickIcon(double x, double y, double size, double fraction) {
@@ -1625,6 +1665,42 @@ static void drawHealthHunger() {
   }
 }
 
+// Manual gluProject: multiplies through the camera matrices captured at the
+// top of render() and maps clip space to screen pixels. False if the point
+// is behind the camera (nothing sensible to draw there).
+static bool worldToScreen(const Vec3& p, double& outX, double& outY) {
+  const double* mv = g_camModelview;
+  double ex = mv[0] * p.x + mv[4] * p.y + mv[8] * p.z + mv[12];
+  double ey = mv[1] * p.x + mv[5] * p.y + mv[9] * p.z + mv[13];
+  double ez = mv[2] * p.x + mv[6] * p.y + mv[10] * p.z + mv[14];
+  double ew = mv[3] * p.x + mv[7] * p.y + mv[11] * p.z + mv[15];
+
+  const double* pr = g_camProjection;
+  double cx = pr[0] * ex + pr[4] * ey + pr[8] * ez + pr[12] * ew;
+  double cy = pr[1] * ex + pr[5] * ey + pr[9] * ez + pr[13] * ew;
+  double cw = pr[3] * ex + pr[7] * ey + pr[11] * ez + pr[15] * ew;
+  if (cw <= 1e-4) return false;
+
+  double ndcX = cx / cw, ndcY = cy / cw;
+  outX = (ndcX * 0.5 + 0.5) * g_camViewport[2] + g_camViewport[0];
+  outY = (1.0 - (ndcY * 0.5 + 0.5)) * g_camViewport[3] + g_camViewport[1]; // NDC +Y is up, screen +Y is down
+  return true;
+}
+
+// A small heart, not a number: drifts up and fades out over its lifetime,
+// same "hit landed" feedback the old numeric popup gave without putting an
+// exact attack-power figure on screen.
+static void drawDamagePopups() {
+  const double SIZE = 18;
+  for (const DamagePopup& p : g_damagePopups) {
+    double sx, sy;
+    if (!worldToScreen(p.position, sx, sy)) continue;
+    double fade = clampd(p.timer / DAMAGE_POPUP_LIFETIME, 0, 1);
+    double ty = sy - (1.0 - fade) * 16;
+    drawHeartIcon(sx - SIZE / 2, ty, SIZE, 1.0, fade);
+  }
+}
+
 static void render() {
   glViewport(0, 0, g_winW, g_winH);
   g_waterView = waterViewState();
@@ -1642,6 +1718,13 @@ static void render() {
 
   if (g_world && g_player) {
     setup3D();
+    // Grab the camera transform right as it's set — every world-space point
+    // drawn this frame goes through exactly this modelview/projection, so
+    // this is what worldToScreen() needs to place damage-popup hearts later
+    // in the 2D HUD pass.
+    glGetDoublev(GL_MODELVIEW_MATRIX, g_camModelview);
+    glGetDoublev(GL_PROJECTION_MATRIX, g_camProjection);
+    glGetIntegerv(GL_VIEWPORT, g_camViewport);
     glEnable(GL_TEXTURE_2D);
     glBindTexture(GL_TEXTURE_2D, atlasTextureId());
 
@@ -1686,6 +1769,7 @@ static void render() {
       anim.heldTool = g_inventory ? g_inventory->mainHand.blockId : -1;
       anim.boating = g_playerBoatIndex >= 0;
       anim.rowPhase = g_boatRowPhase;
+      anim.swimPhase = g_swimPhase;
       drawPlayerModel(*g_player, anim);
       glBindTexture(GL_TEXTURE_2D, atlasTextureId()); // restore for water
     }
@@ -1817,8 +1901,10 @@ static void render() {
   if (g_world && g_hotbar && !g_invOpen && !g_chestOpen && !g_fullMapOpen) g_hotbar->draw(g_winW, g_winH);
   if (g_state == GameState::Playing && !g_invOpen && !g_chestOpen && !g_fullMapOpen) {
     drawHealthHunger();
+    drawDamagePopups();
     drawCrosshair();
     drawInteractPrompt();
+    drawSwimHint();
     drawMinimap(g_winW, g_winH, g_player ? g_player->yaw : 0.0, g_boats);
     if (g_hudMsgTimer > 0 && !g_hudMsg.empty()) {
       double tw = textWidth(g_fontMsg, g_hudMsg.c_str());
@@ -1899,7 +1985,7 @@ static void updateFrame(double dt) {
         g_player->update(dt, *g_world, getMoveInput());
         checkTrapdoorTrigger(dt);
       }
-      if (g_player->dead) killPlayer();
+      if (g_player->dead) pauseGame();
     }
 
     // limb animation: gait advances with actual ground movement; the cycle
@@ -1910,6 +1996,9 @@ static void updateFrame(double dt) {
     if (g_player->onGround) g_walkPhase += hspeed * dt * 3.0;
     double airTarget = g_player->onGround ? 0.0 : 1.0;
     g_airAmount += (airTarget - g_airAmount) * std::min(1.0, dt * 8);
+    // Not gated on onGround like the walk cycle above — a swimmer is rarely
+    // standing on anything, so the kick/stroke needs to keep going regardless.
+    if (g_player->swimming) g_swimPhase += dt * 2.5;
     if (g_armSwingTimer > 0) g_armSwingTimer = std::max(0.0, g_armSwingTimer - dt);
 
     auto removed = g_world->updateLoadedChunks(g_player->position.x, g_player->position.z);
@@ -1943,7 +2032,7 @@ static void updateFrame(double dt) {
       playHitSound();
       if (g_player->health <= 0) {
         g_player->dead = true;
-        killPlayer();
+        pauseGame();
       }
     }
 
@@ -1960,6 +2049,17 @@ static void updateFrame(double dt) {
           g_animals.pop_back();
           continue; // don't advance i — a new element just landed here
         }
+      }
+      i++;
+    }
+
+    // Damage hearts fade out and go away on their own.
+    for (size_t i = 0; i < g_damagePopups.size();) {
+      g_damagePopups[i].timer -= dt;
+      if (g_damagePopups[i].timer <= 0) {
+        g_damagePopups[i] = g_damagePopups.back();
+        g_damagePopups.pop_back();
+        continue;
       }
       i++;
     }
@@ -1999,7 +2099,7 @@ static void updateFrame(double dt) {
       playHitSound();
       if (g_player->health <= 0) {
         g_player->dead = true;
-        killPlayer();
+        pauseGame();
       }
     }
 
