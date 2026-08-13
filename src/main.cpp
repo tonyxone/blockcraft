@@ -354,10 +354,6 @@ static void toggleDoor(int x, int y, int z) {
   playDoorSound(nowOpen);
 }
 
-// Also what death falls back to (health hitting 0 sets Player::dead, and
-// the per-frame check below calls this same function): the same pause
-// screen ESC opens, not a dedicated death screen — there's no respawn, so
-// Restart/Load/Main Menu are the ways forward, same as any other pause.
 static void pauseGame() {
   if (g_state != GameState::Playing) return;
   closeInventory();
@@ -366,6 +362,20 @@ static void pauseGame() {
   clearKeys();
   setCursorCaptured(false);
   g_menu.showPanel(MenuPanel::Pause);
+}
+
+// Health hit 0 (Player::update set g_player->dead): same "close panels,
+// freeze the world, release the cursor" shape as pauseGame(), but the red
+// Dead screen instead — no Resume (there's no game state worth resuming
+// into) and no respawn, so Restart/Load/Main Menu are the ways forward.
+static void killPlayer() {
+  if (g_state != GameState::Playing) return;
+  closeInventory();
+  closeChest();
+  g_state = GameState::Paused;
+  clearKeys();
+  setCursorCaptured(false);
+  g_menu.showPanel(MenuPanel::Dead);
 }
 
 static void startNewGame() {
@@ -1991,7 +2001,7 @@ static void updateFrame(double dt) {
         g_player->update(dt, *g_world, getMoveInput());
         checkTrapdoorTrigger(dt);
       }
-      if (g_player->dead) pauseGame();
+      if (g_player->dead) killPlayer();
     }
 
     // limb animation: gait advances with actual ground movement; the cycle
@@ -2038,7 +2048,7 @@ static void updateFrame(double dt) {
       playHitSound();
       if (g_player->health <= 0) {
         g_player->dead = true;
-        pauseGame();
+        killPlayer();
       }
     }
 
@@ -2095,7 +2105,7 @@ static void updateFrame(double dt) {
       playHitSound();
       if (g_player->health <= 0) {
         g_player->dead = true;
-        pauseGame();
+        killPlayer();
       }
     }
 

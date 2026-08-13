@@ -211,6 +211,17 @@ void Menu::draw(int winW, int winH, double mouseX, double mouseY) {
                 { "Main Menu", MenuAction::QuitToMenu } ,
                 { "Quit", MenuAction::Quit }};;
       break;
+    case MenuPanel::Dead:
+      // No Resume (there's no game state worth resuming into) and no Save
+      // (nothing worth saving) — just the ways forward: a fresh attempt,
+      // an earlier save, or back out entirely.
+      title = "Dead";
+      items = { { "Restart", MenuAction::Restart },
+                { "Load", MenuAction::Load },
+                { "Settings", MenuAction::OpenSettings },
+                { "Main Menu", MenuAction::QuitToMenu },
+                { "Quit", MenuAction::Quit } };
+      break;
     case MenuPanel::SettingsPanel:
       title = "Settings";
       items = { { "Back", MenuAction::Back } };
@@ -258,9 +269,11 @@ void Menu::draw(int winW, int winH, double mouseX, double mouseY) {
   double y = (winH - h) / 2;
   double cx = winW / 2.0;
 
-  // --- title ---
+  // --- title --- (red on the death screen, white everywhere else)
+  bool isDead = panel == MenuPanel::Dead;
+  double titleR = isDead ? 0.85 : 1, titleG = isDead ? 0.12 : 1, titleB = isDead ? 0.12 : 1;
   drawText(g_fontTitle, cx - textWidth(g_fontTitle, title) / 2 + 2, y + 2, title, 0, 0, 0, 1);
-  drawText(g_fontTitle, cx - textWidth(g_fontTitle, title) / 2, y, title, 1, 1, 1, 1);
+  drawText(g_fontTitle, cx - textWidth(g_fontTitle, title) / 2, y, title, titleR, titleG, titleB, 1);
   y += titleH + TITLE_MARGIN;
 
   auto drawButton = [&](const char* label, MenuAction action) {
