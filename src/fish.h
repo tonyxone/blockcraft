@@ -105,6 +105,13 @@ struct Fish {
   bool dying = false;
   double deathTimer = 0;
 
+  // Set to the session clock (main.cpp's g_elapsedTime) every time the
+  // player lands a hit — main.cpp shows a floating health bar over the fish
+  // while it's within 5 seconds of this timestamp, same convention
+  // animal.h's Animal::lastHitTime uses. Starts far in the past so a fresh
+  // spawn shows no bar.
+  double lastHitTime = -1e9;
+
   // Shark only: set the instant the player lands a hit, cleared once
   // provokedTimer runs out without a fresh one. While provoked, updateFish
   // chases the player instead of ambient wandering; main.cpp resolves the

@@ -81,6 +81,9 @@ static double g_walkPhase = 0;   // gait cycle, advances with distance walked
 static double g_walkAmount = 0;  // smoothed 0..1 swing strength
 static double g_airAmount = 0;   // smoothed 0..1 airborne-pose blend
 static double g_swimPhase = 0;   // kick/stroke cycle, advances continuously while swimming
+// Seconds since the session started, used to drift the clouds and time how
+// recently an animal/fish was last hit (see Animal/Fish::lastHitTime).
+static double g_elapsedTime = 0;
 static double g_armSwingTimer = 0;
 static bool g_swingLeftHand = false; // right hand collects, left hand builds
 
@@ -96,17 +99,6 @@ static double g_fishSpawnTimer = 0; // seconds since the last fish spawn mainten
 static std::vector<Boat> g_boats;
 static int g_playerBoatIndex = -1; // index into g_boats while driving, -1 when on foot
 static double g_boatRowPhase = 0;  // advances while actively rowing; drives paddle animation
-
-// A tiny heart icon that pops up over an animal's/fish's head on a hit and
-// fades after half a second — feedback that it took damage without a raw
-// number attached to it. World-space position, but drawn as flat 2D HUD
-// content (see worldToScreen) since there's no billboarded-3D machinery here.
-struct DamagePopup {
-  Vec3 position;
-  double timer;
-};
-static std::vector<DamagePopup> g_damagePopups;
-const double DAMAGE_POPUP_LIFETIME = 0.5;
 
 // Camera matrices captured once per frame right after setup3D() — the exact
 // view+projection state every world-space point was drawn with — so
@@ -214,7 +206,6 @@ static void createSession(const SaveState* save) {
 
   g_animals.clear(); // not persisted (like a furnace's lit state) — fresh each session
   g_animalSpawnTimer = 0;
-  g_damagePopups.clear();
   g_droppedItems.clear(); // dropped items don't survive a reload either
   g_fishes.clear();
   g_fishSpawnTimer = 0;
@@ -802,10 +793,10 @@ static void tryMine() {
     double dmg = attackPower(weapon);
     target.health -= dmg;
     playHitSound();
-    g_damagePopups.push_back(
-        { Vec3(target.position.x, target.position.y + ANIMAL_SPECIES[target.species].height + 0.1,
-              target.position.z),
-         DAMAGE_POPUP_LIFETIME });
+    // Shows the floating health bar (drawEntityHealthBars) for the next 5
+    // seconds; refreshed on every hit so it stays up through a sustained
+    // attack and only fades once it actually stops.
+    target.lastHitTime = g_elapsedTime;
     // Provoked: a prey species (AnimalSpeciesDef::predator false) spends
     // this window running from the player instead of wandering; a predator
     // spends it chasing and biting back (see the per-frame loops below).
@@ -833,8 +824,7 @@ static void tryMine() {
     double dmg = attackPower(weapon);
     target.health -= dmg;
     playHitSound();
-    g_damagePopups.push_back(
-        { Vec3(target.position.x, target.position.y + 0.3, target.position.z), DAMAGE_POPUP_LIFETIME });
+    target.lastHitTime = g_elapsedTime;
     // Only the shark ever does anything with this (FishSpeciesDef::
     // attackPower is 0 for every other species, see the bite loop below) —
     // harmless to set unconditionally, same as the animal provoke above.
@@ -1273,8 +1263,6 @@ static void underwaterTint(double depth, WaterView& out) {
 
 // Recomputed once per frame, before rendering.
 static WaterView g_waterView;
-// Seconds since the session started, used to drift the clouds.
-static double g_elapsedTime = 0;
 
 static WaterView waterViewState() {
   WaterView view;
@@ -1650,16 +1638,17 @@ static void drawHealthHunger() {
   drawStatRow(g_player->hunger, HUNGER_PIPS_SHOWN * 2, drumstickRowX, rowY, false);
 
   // Bubbles: only shown while actually short of breath, same "row only
-  // appears when it means something" convention vanilla's own HUD uses.
+  // appears when it means something" convention vanilla's own HUD uses. One
+  // pip per oxygen point (not 2-per-pip like hearts/hunger) — oxygen only
+  // ever moves in whole points, so there's no half-pip state to show.
   if (g_player->oxygen < g_player->maxOxygen) {
-    int pips = g_player->maxOxygen / 2;
+    int pips = g_player->maxOxygen;
     double bubbleRowY = rowY - ROW_GAP - STAT_ICON;
     for (int i = 0; i < pips; i++) {
       double ix = drumstickRowX + i * (STAT_ICON + STAT_GAP);
       drawRect(ix, bubbleRowY, STAT_ICON, STAT_ICON, 0.12, 0.12, 0.12, 0.55);
       drawRectOutline(ix, bubbleRowY, STAT_ICON, STAT_ICON, 1, 0, 0, 0, 0.6);
-      int pipValue = g_player->oxygen - i * 2;
-      double fraction = pipValue >= 2 ? 1.0 : pipValue == 1 ? 0.5 : 0.0;
+      double fraction = i < g_player->oxygen ? 1.0 : 0.0;
       drawBubbleIcon(ix, bubbleRowY, STAT_ICON, fraction);
     }
   }
@@ -1687,17 +1676,34 @@ static bool worldToScreen(const Vec3& p, double& outX, double& outY) {
   return true;
 }
 
-// A small heart, not a number: drifts up and fades out over its lifetime,
-// same "hit landed" feedback the old numeric popup gave without putting an
-// exact attack-power figure on screen.
-static void drawDamagePopups() {
-  const double SIZE = 18;
-  for (const DamagePopup& p : g_damagePopups) {
-    double sx, sy;
-    if (!worldToScreen(p.position, sx, sy)) continue;
-    double fade = clampd(p.timer / DAMAGE_POPUP_LIFETIME, 0, 1);
-    double ty = sy - (1.0 - fade) * 16;
-    drawHeartIcon(sx - SIZE / 2, ty, SIZE, 1.0, fade);
+// A small floating bar over an animal's/fish's head, its red fill scaled to
+// health/maxHealth — shown only while HEALTH_BAR_SHOW_DURATION seconds
+// haven't yet passed since Animal/Fish::lastHitTime, so it appears on a hit
+// and disappears again once the attack has actually stopped, no raw number
+// attached either way.
+const double HEALTH_BAR_SHOW_DURATION = 5.0;
+const double HEALTH_BAR_W = 32, HEALTH_BAR_H = 5;
+
+static void drawHealthBar(const Vec3& worldPos, double health, double maxHealth) {
+  double sx, sy;
+  if (!worldToScreen(worldPos, sx, sy)) return;
+  double frac = maxHealth > 0 ? clampd(health / maxHealth, 0, 1) : 0;
+  double x = sx - HEALTH_BAR_W / 2, y = sy;
+  drawRect(x - 1, y - 1, HEALTH_BAR_W + 2, HEALTH_BAR_H + 2, 0, 0, 0, 0.6); // shadow/border
+  drawRect(x, y, HEALTH_BAR_W, HEALTH_BAR_H, 0.15, 0.15, 0.15, 0.85);       // empty track
+  drawRect(x, y, HEALTH_BAR_W * frac, HEALTH_BAR_H, 0.85, 0.12, 0.12, 1.0); // health fill
+}
+
+static void drawEntityHealthBars() {
+  for (const Animal& a : g_animals) {
+    if (a.dying || g_elapsedTime - a.lastHitTime > HEALTH_BAR_SHOW_DURATION) continue;
+    Vec3 pos(a.position.x, a.position.y + ANIMAL_SPECIES[a.species].height + 0.15, a.position.z);
+    drawHealthBar(pos, a.health, ANIMAL_SPECIES[a.species].maxHealth);
+  }
+  for (const Fish& f : g_fishes) {
+    if (f.dying || g_elapsedTime - f.lastHitTime > HEALTH_BAR_SHOW_DURATION) continue;
+    Vec3 pos(f.position.x, f.position.y + FISH_SPECIES[f.species].halfHeight * f.scale + 0.15, f.position.z);
+    drawHealthBar(pos, f.health, FISH_SPECIES[f.species].maxHealth);
   }
 }
 
@@ -1901,7 +1907,7 @@ static void render() {
   if (g_world && g_hotbar && !g_invOpen && !g_chestOpen && !g_fullMapOpen) g_hotbar->draw(g_winW, g_winH);
   if (g_state == GameState::Playing && !g_invOpen && !g_chestOpen && !g_fullMapOpen) {
     drawHealthHunger();
-    drawDamagePopups();
+    drawEntityHealthBars();
     drawCrosshair();
     drawInteractPrompt();
     drawSwimHint();
@@ -2053,16 +2059,6 @@ static void updateFrame(double dt) {
       i++;
     }
 
-    // Damage hearts fade out and go away on their own.
-    for (size_t i = 0; i < g_damagePopups.size();) {
-      g_damagePopups[i].timer -= dt;
-      if (g_damagePopups[i].timer <= 0) {
-        g_damagePopups[i] = g_damagePopups.back();
-        g_damagePopups.pop_back();
-        continue;
-      }
-      i++;
-    }
 
     // Dropped items: fall/settle physics only — picking one up is a
     // deliberate E press now (tryPickUpItem), not automatic on approach.

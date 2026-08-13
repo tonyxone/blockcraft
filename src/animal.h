@@ -84,6 +84,13 @@ struct Animal {
   double provokedTimer = 0;
   double attackCooldown = 0;
 
+  // Set to the session clock (main.cpp's g_elapsedTime) every time the
+  // player lands a hit — main.cpp shows a floating health bar over the
+  // animal while it's within 5 seconds of this timestamp, so the bar
+  // appears on a hit and disappears once the attack has actually stopped.
+  // Starts far enough in the past that a fresh spawn shows no bar.
+  double lastHitTime = -1e9;
+
   // Death sequence: once health reaches 0 the animal isn't removed right
   // away — it lies down for a few seconds (see drawAnimals) before actually
   // leaving the world, so a kill reads as an event instead of a pop.
