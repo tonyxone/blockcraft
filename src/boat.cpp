@@ -38,62 +38,80 @@ void drawBox(double x0, double y0, double z0, double w, double h, double d, doub
   }
 }
 
-// Modelled on the modern vanilla boat (minecraft.wiki's 1.9+ render): an
-// upswept pointed BOW — stacked steps that narrow AND rise toward the tip —
-// a flat transom STERN (unlike the old tub, which was pointed at both
-// ends), planked floor, side walls with a darker gunwale rail, and two
-// bench seats. No oars: the rider never holds any, so loose shafts stuck
-// to the hull read as clutter (player request). Built along Z (bow toward
-// -Z, matching every other entity's own yaw convention in this game),
-// centered on the point the player stands at while riding.
-// Still fills the full 2x1 footprint (player request).
-const double HULL_LEN = 2.0, HULL_WID = 1.0, WALL_H = 0.3, FLOOR_H = 0.1;
-const double WOOD_R = 0.55, WOOD_G = 0.38, WOOD_B = 0.22;
-const double TRIM_R = 0.34, TRIM_G = 0.22, TRIM_B = 0.12;
-const double SEAT_R = 0.46, SEAT_G = 0.31, SEAT_B = 0.18;
+// Modelled on the classic clinker-built wooden rowboat in the reference
+// photo (Desktop\blockcraft\boat.jpg): light pine tones, BOTH ends upswept
+// (the bow sweeps higher than the stern), hull sides visibly planked —
+// three horizontal strakes in alternating shades — capped by a darker
+// gunwale rail that overhangs the walls slightly inboard, a
+// lengthwise-planked floor, and two bench thwarts. No oars: the rider
+// never holds any, so a loose shaft across the hull reads as clutter
+// (player request). Built along Z (bow toward -Z, matching every other
+// entity's own yaw convention in this game), centered on the point the
+// player stands at while riding. Still fills the full 2x1 footprint
+// (player request).
+const double HULL_LEN = 2.0, HULL_WID = 1.0, FLOOR_H = 0.10;
+const double WOOD_R = 0.70, WOOD_G = 0.55, WOOD_B = 0.36;
+const double STRAKE_S = 0.85; // alternating plank shade
+const double TRIM_R = 0.50, TRIM_G = 0.37, TRIM_B = 0.23;
+const double SEAT_R = 0.76, SEAT_G = 0.60, SEAT_B = 0.40;
+
+// One side wall as three stacked plank strakes, alternating shades.
+void drawStrakeWall(double x0, double z0, double len) {
+  for (int i = 0; i < 3; i++) {
+    double s = (i % 2 == 0) ? 1.0 : STRAKE_S;
+    drawBox(x0, FLOOR_H + i * 0.10, z0, 0.10, 0.10, len,
+            WOOD_R * s, WOOD_G * s, WOOD_B * s);
+  }
+}
 
 void drawHull() {
   double hl = HULL_LEN / 2, hw = HULL_WID / 2;
-  double floorW = HULL_WID - 0.26;
+  double floorW = HULL_WID - 0.24;
+  double wallZ0 = -hl + 0.44, wallLen = HULL_LEN - 0.78; // between the end steps
 
-  // planked floor: strips running across the hull, alternating shades
-  for (int i = 0; i < 4; i++) {
-    double z0 = -hl + 0.24 + i * (HULL_LEN - 0.48) / 4;
-    double s = (i % 2 == 0) ? 1.0 : 0.88;
-    drawBox(-floorW / 2, 0, z0, floorW, FLOOR_H, (HULL_LEN - 0.48) / 4 - 0.02,
-            0.50 * s, 0.34 * s, 0.20 * s);
+  // planked floor: strips running lengthwise, alternating shades
+  for (int i = 0; i < 3; i++) {
+    double s = (i % 2 == 0) ? 1.0 : STRAKE_S;
+    drawBox(-floorW / 2 + i * floorW / 3, 0, wallZ0, floorW / 3 - 0.02, FLOOR_H,
+            wallLen, (WOOD_R - 0.10) * s, (WOOD_G - 0.10) * s, (WOOD_B - 0.08) * s);
   }
 
-  // side walls with a darker gunwale rail on top
+  // planked side walls with a darker gunwale rail on top, overhanging
+  // slightly inboard like the real boat's capped rail
   for (int side = -1; side <= 1; side += 2) {
-    double x0 = side < 0 ? -hw : hw - 0.12;
-    drawBox(x0, FLOOR_H, -hl + 0.42, 0.12, WALL_H, HULL_LEN - 0.84, WOOD_R, WOOD_G, WOOD_B);
-    drawBox(x0, FLOOR_H + WALL_H, -hl + 0.42, 0.12, 0.05, HULL_LEN - 0.84, TRIM_R, TRIM_G, TRIM_B);
+    double x0 = side < 0 ? -hw : hw - 0.10;
+    drawStrakeWall(x0, wallZ0, wallLen);
+    double railX0 = side < 0 ? -hw : hw - 0.13;
+    drawBox(railX0, FLOOR_H + 0.30, wallZ0 - 0.04, 0.13, 0.06, wallLen + 0.08,
+            TRIM_R, TRIM_G, TRIM_B);
   }
 
   // bow (-Z): three stacked steps that narrow and RISE toward the tip, so
-  // the front sweeps up out of the water instead of ending cut off square
-  drawBox(-hw + 0.02, 0, -hl + 0.08, HULL_WID - 0.04, WALL_H + FLOOR_H, 0.36,
+  // the front sweeps up out of the water like the photo's high prow
+  drawBox(-hw + 0.02, 0, -hl + 0.10, HULL_WID - 0.04, FLOOR_H + 0.20, 0.34,
           WOOD_R, WOOD_G, WOOD_B);
-  drawBox(-hw * 0.62, 0, -hl + 0.02, HULL_WID * 0.62, WALL_H + FLOOR_H + 0.10, 0.24,
+  drawBox(-hw * 0.66, 0, -hl + 0.03, HULL_WID * 0.66, FLOOR_H + 0.36, 0.21,
           WOOD_R, WOOD_G, WOOD_B);
-  drawBox(-hw * 0.30, 0, -hl, HULL_WID * 0.30, WALL_H + FLOOR_H + 0.20, 0.14,
+  drawBox(-hw * 0.34, 0, -hl, HULL_WID * 0.34, FLOOR_H + 0.52, 0.12,
           WOOD_R, WOOD_G, WOOD_B);
-  drawBox(-hw * 0.62, WALL_H + FLOOR_H + 0.10, -hl + 0.02, HULL_WID * 0.62, 0.05, 0.24,
+  drawBox(-hw * 0.66, FLOOR_H + 0.36, -hl + 0.03, HULL_WID * 0.66, 0.06, 0.21,
           TRIM_R, TRIM_G, TRIM_B);
-  drawBox(-hw * 0.30, WALL_H + FLOOR_H + 0.20, -hl, HULL_WID * 0.30, 0.05, 0.14,
-          TRIM_R, TRIM_G, TRIM_B);
-
-  // stern (+Z): flat transom board with its own rail
-  drawBox(-hw + 0.02, 0, hl - 0.20, HULL_WID - 0.04, WALL_H + FLOOR_H + 0.06, 0.12,
-          WOOD_R, WOOD_G, WOOD_B);
-  drawBox(-hw + 0.02, WALL_H + FLOOR_H + 0.06, hl - 0.20, HULL_WID - 0.04, 0.05, 0.12,
+  drawBox(-hw * 0.34, FLOOR_H + 0.52, -hl, HULL_WID * 0.34, 0.06, 0.12,
           TRIM_R, TRIM_G, TRIM_B);
 
-  // two bench seats across the hull — vanilla's boat seats two
+  // stern (+Z): same upswept treatment, but only two steps — the stern in
+  // the photo rises gently where the bow rises steeply
+  drawBox(-hw + 0.02, 0, hl - 0.36, HULL_WID - 0.04, FLOOR_H + 0.18, 0.26,
+          WOOD_R, WOOD_G, WOOD_B);
+  drawBox(-hw * 0.68, 0, hl - 0.12, HULL_WID * 0.68, FLOOR_H + 0.34, 0.12,
+          WOOD_R, WOOD_G, WOOD_B);
+  drawBox(-hw * 0.68, FLOOR_H + 0.34, hl - 0.12, HULL_WID * 0.68, 0.06, 0.12,
+          TRIM_R, TRIM_G, TRIM_B);
+
+  // two bench thwarts across the hull, up near rail height as in the photo
   for (int i = 0; i < 2; i++) {
-    double z0 = i == 0 ? -0.52 : 0.30;
-    drawBox(-floorW / 2 - 0.03, FLOOR_H + 0.14, z0, floorW + 0.06, 0.06, 0.22,
+    double z0 = i == 0 ? -0.42 : 0.26;
+    drawBox(-floorW / 2 - 0.03, FLOOR_H + 0.20, z0, floorW + 0.06, 0.06, 0.24,
             SEAT_R, SEAT_G, SEAT_B);
   }
 }

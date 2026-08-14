@@ -32,8 +32,8 @@ void updateBoat(Boat& boat, World& world, double dt, double desiredYaw, int move
 // Index of the closest unoccupied boat within enter-reach of `pos`, or -1.
 int nearestBoat(const std::vector<Boat>& boats, const Vec3& pos);
 
-// Draws every boat — a simple canoe-like hull (flat bottom, raised side
-// walls, bow and stern tapered to a point, a bench seat inside), researched
-// against the vanilla render this project keeps at
-// Desktop\animal\Oak_Boat_JE4_BE2.png.
+// Draws every boat — a clinker-built wooden rowboat (planked side strakes,
+// overhanging gunwale rail, both ends upswept with the bow higher, two
+// bench thwarts), modelled on the reference photo at
+// Desktop\blockcraft\boat.jpg.
 void drawBoats(const std::vector<Boat>& boats);
