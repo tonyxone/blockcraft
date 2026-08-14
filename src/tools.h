@@ -49,6 +49,19 @@ bool isSpriteTool(uint8_t id);
 // not meant as a real weapon.
 double attackPower(uint8_t selectedItemId);
 
+// Relative heft of a gripped item, 1.0 being an ordinary one-handed grip —
+// what main.cpp scales the arm-swing animation's duration by, so a heavy
+// tool visibly winds up and comes down slower than a light one instead of
+// every item swinging at the same identical speed. Two rules, same as real
+// tools: within one shape, the stone-headed tier outweighs the wood one
+// (stone is denser than the wood haft both tiers share), and a
+// shape with a bigger/thicker head (pickaxe, axe) outweighs a shape with a
+// slighter one (hoe, sword) even at the same tier. The named upgrades (The
+// First Sword, the Power Axe) outweigh the ordinary stone tool they were
+// forged from — more raw material went into them. A bare hand, and the
+// bare stick, are lighter than any headed tool.
+double toolWeight(uint8_t item);
+
 // Shape of a tool swing over `swingT` (0..1): -1 is fully wound up with the
 // tool raised back, +1 is driving down through the strike, 0 is rest.
 // Deliberately asymmetric — a smash lifts briefly, comes down hard, then

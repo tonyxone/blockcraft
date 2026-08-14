@@ -85,6 +85,15 @@ static double g_swimPhase = 0;   // kick/stroke cycle, advances continuously whi
 // recently an animal/fish was last hit (see Animal/Fish::lastHitTime).
 static double g_elapsedTime = 0;
 static double g_armSwingTimer = 0;
+// Set alongside g_armSwingTimer whenever a mining/attack swing starts
+// (tryMine), from toolWeight() of whatever's actually gripped — the timer
+// still starts at the same ARM_SWING_TIME and the swing's POSE still comes
+// from the same 0..1 fraction of it (so screenshot/self-test code that
+// pokes g_armSwingTimer to an exact phase is unaffected), but it counts
+// down slower for a heavy item and faster for a light one, so a heavier
+// tool/weapon visibly winds up and comes down slower. 1.0 outside of a
+// mining/attack swing (building's own swing stays unscaled).
+static double g_armSwingWeight = 1.0;
 static bool g_swingLeftHand = false; // right hand collects, left hand builds
 
 static std::unique_ptr<World> g_world;
@@ -781,6 +790,12 @@ static void tryMine() {
   // playMineSound() below, which only fires on a successful mine.
   bool holdingTool = g_inventory && isToolItem((uint8_t)g_inventory->mainHand.blockId);
   if (holdingTool) playSwingSound();
+  // Same "gripped tool, falling back to the hotbar selection" item the
+  // combat branches below resolve their own weapon from — whatever's
+  // actually being swung is what its weight should slow or quicken.
+  uint8_t swingingItem = holdingTool ? (uint8_t)g_inventory->mainHand.blockId
+                                     : (uint8_t)(g_hotbar ? g_hotbar->selectedBlockId() : -1);
+  g_armSwingWeight = toolWeight(swingingItem);
 
   // An animal in reach takes priority over mining a block behind it — the
   // same swing either attacks or mines, never both. Riding a boat skips
@@ -1046,6 +1061,7 @@ static void tryPlace() {
   if (tryDrinkSelected()) return;
   if (tryPlaceBoat()) return;
   g_armSwingTimer = ARM_SWING_TIME;
+  g_armSwingWeight = 1.0; // building isn't a weighted tool swing, unlike tryMine's
   g_swingLeftHand = true; // building is the left hand
   RaycastHit hit;
   if (!targetedBlock(hit, PLACE_REACH)) return;
@@ -2015,7 +2031,12 @@ static void updateFrame(double dt) {
     // Not gated on onGround like the walk cycle above — a swimmer is rarely
     // standing on anything, so the kick/stroke needs to keep going regardless.
     if (g_player->swimming) g_swimPhase += dt * 2.5;
-    if (g_armSwingTimer > 0) g_armSwingTimer = std::max(0.0, g_armSwingTimer - dt);
+    // Divided by weight, not multiplied: a heavier item counts down SLOWER
+    // (more real seconds to reach the same pose fraction), a lighter one
+    // faster — see g_armSwingWeight.
+    if (g_armSwingTimer > 0) {
+      g_armSwingTimer = std::max(0.0, g_armSwingTimer - dt / g_armSwingWeight);
+    }
 
     auto removed = g_world->updateLoadedChunks(g_player->position.x, g_player->position.z);
     for (auto& chunk : removed) disposeChunk(*chunk);

@@ -310,6 +310,35 @@ double attackPower(uint8_t selectedItemId) {
   }
 }
 
+double toolWeight(uint8_t item) {
+  switch (item) {
+    // Light, thin-headed tools: not much more than the haft itself.
+    case ITEM_WOOD_HOE: return 0.75;
+    case ITEM_STONE_HOE: return 1.00;
+    case ITEM_WOOD_SHOVEL: return 0.85;
+    case ITEM_STONE_SHOVEL: return 1.15;
+    // A sword is long but thin and one-handed — lighter than a wedge-headed
+    // axe or a thick two-pronged pickaxe of the same tier.
+    case ITEM_WOOD_SWORD: return 0.90;
+    case ITEM_STONE_SWORD: return 1.20;
+    // Forged from 3 stone swords' worth of material (see CRAFT_RECIPES) —
+    // heavier than the standard stone sword it's built from.
+    case ITEM_SWORD: return 1.40;
+    // A dense wedge head, real axes' own reputation for being front-heavy.
+    case ITEM_WOOD_AXE: return 1.10;
+    case ITEM_STONE_AXE: return 1.50;
+    // Forged from 3 stone axes — heavier than the standard stone axe.
+    case ITEM_POWER_AXE: return 2.00;
+    // The heaviest ordinary tool: a thick head split into two full prongs
+    // plus a crossbar, more metal than any single-bladed shape here.
+    case ITEM_WOOD_PICKAXE: return 1.25;
+    case ITEM_STONE_PICKAXE: return 1.70;
+    // Equippable, but barely more than swinging nothing at all.
+    case ITEM_STICK: return 0.45;
+    default: return 0.55; // bare hand — light and quick, heavier than a stick's whip but still fast
+  }
+}
+
 double toolSwingPhase(double swingT) {
   if (swingT <= 0.0 || swingT >= 1.0) return 0.0;
   double t = clampd(swingT, 0, 1);
