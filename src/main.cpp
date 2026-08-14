@@ -801,20 +801,23 @@ static void tryMine() {
   // same swing either attacks or mines, never both. Riding a boat skips
   // combat entirely (both hands are on the paddle, not swinging a weapon),
   // so this whole priority check only runs on foot.
+  //
+  // Damage and reach both come from whatever's actually gripped in the hand
+  // (mainHand, the same slot holdingTool above checks) — every tiered
+  // tool/weapon is equippable there now, and that's what's rendered swinging
+  // in the player's hand, so it is what should land the hit. Falls back to
+  // the hotbar selection when nothing is equipped, so a tool that's merely
+  // selected (not yet dragged into the hand slot) still counts for
+  // something rather than silently attacking bare-handed. The spear's
+  // longer reach (attackReach) applies here too — that's its whole point.
+  uint8_t weapon = holdingTool ? (uint8_t)g_inventory->mainHand.blockId
+                               : (uint8_t)(g_hotbar ? g_hotbar->selectedBlockId() : -1);
+  double weaponReach = attackReach(weapon);
   int animalHit = g_playerBoatIndex < 0
-                      ? raycastAnimal(g_animals, g_player->eyePosition(), lookDirection(), MINE_REACH)
+                      ? raycastAnimal(g_animals, g_player->eyePosition(), lookDirection(), weaponReach)
                       : -1;
   if (animalHit >= 0) {
     Animal& target = g_animals[animalHit];
-    // Damage comes from whatever's actually gripped in the hand (mainHand,
-    // the same slot holdingTool above checks) — every tiered tool/weapon is
-    // equippable there now, and that's what's rendered swinging in the
-    // player's hand, so it is what should land the hit. Falls back to the
-    // hotbar selection when nothing is equipped, so a tool that's merely
-    // selected (not yet dragged into the hand slot) still counts for
-    // something rather than silently attacking bare-handed.
-    uint8_t weapon = holdingTool ? (uint8_t)g_inventory->mainHand.blockId
-                                 : (uint8_t)(g_hotbar ? g_hotbar->selectedBlockId() : -1);
     double dmg = attackPower(weapon);
     target.health -= dmg;
     playHitSound();
@@ -840,12 +843,10 @@ static void tryMine() {
   // attacked instead of mining whatever's behind it — also skipped while
   // boating, same as the animal check above.
   int fishHit = g_playerBoatIndex < 0
-                    ? raycastFish(g_fishes, g_player->eyePosition(), lookDirection(), MINE_REACH)
+                    ? raycastFish(g_fishes, g_player->eyePosition(), lookDirection(), weaponReach)
                     : -1;
   if (fishHit >= 0) {
     Fish& target = g_fishes[fishHit];
-    uint8_t weapon = holdingTool ? (uint8_t)g_inventory->mainHand.blockId
-                                 : (uint8_t)(g_hotbar ? g_hotbar->selectedBlockId() : -1);
     double dmg = attackPower(weapon);
     target.health -= dmg;
     playHitSound();
@@ -4768,6 +4769,40 @@ static int runSelftest() {
                    "  (recipe=%d count=%d power=%d equip=%d heldGeom=%d art=%d icon=%d)\n",
                    recipeOk, countOk, powerOk, equippable, sameHeldGeometryAsStoneSword, artSupplied,
                    iconIsTheArt);
+    }
+  }
+
+  // Spear: 1 stone + 2 sticks on the DIAGONAL (a straight column would be
+  // the stone shovel — same totals, different layout), stone-sword damage
+  // but double the reach, and a thrust (poke) rather than a slash.
+  {
+    uint8_t grid[9] = {};
+    grid[0] = BLOCK_STONE; grid[4] = ITEM_STICK; grid[8] = ITEM_STICK;
+    const Recipe* hit = findRecipe(grid);
+    bool recipeOk = hit && hit->output == ITEM_SPEAR && hit->outputCount == 1;
+    // Shaped recipes also match mirrored, and the mirror must not collide
+    // with any other recipe either.
+    uint8_t mgrid[9] = {};
+    mgrid[2] = BLOCK_STONE; mgrid[4] = ITEM_STICK; mgrid[6] = ITEM_STICK;
+    const Recipe* mhit = findRecipe(mgrid);
+    bool mirrorOk = mhit && mhit->output == ITEM_SPEAR;
+
+    bool powerOk = attackPower(ITEM_SPEAR) == 2.0;
+    bool reachOk = attackReach(ITEM_SPEAR) > attackReach(ITEM_SWORD) &&
+                   attackReach(ITEM_SWORD) == attackReach(ITEM_STONE_SWORD);
+    bool pokeOk = toolPokes(ITEM_SPEAR) && !toolPokes(ITEM_SWORD) &&
+                  !toolPokes(ITEM_STONE_SWORD);
+    bool equippable = isToolItem(ITEM_SPEAR);
+    const GeneratedSprite* sprite = generatedSpriteNamed("spear");
+    bool artSupplied = sprite && sprite->rgba;
+    bool tileOk = craftItemTile(ITEM_SPEAR) == TILE_SPEAR;
+
+    bool ok = recipeOk && mirrorOk && powerOk && reachOk && pokeOk && equippable &&
+              artSupplied && tileOk;
+    check(ok, "spear_craft_item");
+    if (!ok) {
+      std::fprintf(f, "  (recipe=%d mirror=%d power=%d reach=%d poke=%d equip=%d art=%d tile=%d)\n",
+                   recipeOk, mirrorOk, powerOk, reachOk, pokeOk, equippable, artSupplied, tileOk);
     }
   }
 

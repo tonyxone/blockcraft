@@ -385,23 +385,27 @@ void drawFirstPersonArm(double swing, bool leftHand, int heldTool, int winW, int
   // Swinging a TOOL is a smash, not a punch: the arm lifts, drives down
   // through the block and recovers, following the same phase curve the tool
   // does so the two move as one piece. A bare fist keeps the old even
-  // out-and-back jab.
+  // out-and-back jab. A poking weapon (toolPokes — the spear) does neither:
+  // the arm stays at its rest tip and the whole viewmodel slides straight
+  // forward into the scene and back, a jab rather than a chop.
   bool smashing = heldTool >= 0 && !leftHand;
+  bool poking = smashing && toolPokes((uint8_t)heldTool);
   double phase = smashing ? toolSwingPhase(swing) : 0.0;
   // Matches the 80 degrees the third-person arm swings through, so the blow
   // has the same weight from inside the head as it does watching yourself.
   // At 34 the viewmodel barely twitched next to it.
   const double ARM_SMASH_DEG = 76.0;  // how far the arm itself rises and falls
   const double ARM_SMASH_LIFT = 0.11; // and how far the fist travels with it
+  const double FP_POKE_REACH = 0.22;  // how far the spear jabs into the scene
 
   double side = leftHand ? -1.0 : 1.0;
   // MINUS phase: tipping further about X drives the fist up and out, so the
   // windup (phase -1) raises the arm and the strike (phase +1) brings it
   // down. Adding it instead made the blow travel upwards.
-  double armTip = 72.0 + arc * 26.0 - phase * ARM_SMASH_DEG;
+  double armTip = 72.0 + arc * 26.0 - (poking ? 0.0 : phase * ARM_SMASH_DEG);
   glTranslated((0.42 + IDLE_OUT * idle) * side,
-               -0.42 - arc * 0.04 - IDLE_DROP * idle - phase * ARM_SMASH_LIFT,
-               -0.30 - IDLE_BACK * idle);
+               -0.42 - arc * 0.04 - IDLE_DROP * idle - (poking ? 0.0 : phase * ARM_SMASH_LIFT),
+               -0.30 - IDLE_BACK * idle - (poking ? phase * FP_POKE_REACH : 0.0));
   glRotated(-18.0 * side, 0, 0, 1);
   glRotated(armTip, 1, 0, 0);
   glRotated(6.0 * side, 0, 1, 0);
@@ -425,9 +429,9 @@ void drawFirstPersonArm(double swing, bool leftHand, int heldTool, int winW, int
   // Negative leans the head INWARD, toward the middle of the view, rather
   // than out past the edge of the screen — same angle, mirrored.
   const double FP_TOOL_LEAN_DEG = -45.0;
-  // A sprite tool (isSpriteTool: currently the sword and the power axe, any
-  // item held as its own hand-drawn art rather than procedural geometry —
-  // see tools.h) gets its own lean: at -45 it points hard to the right (the
+  // A sprite tool (isSpriteTool: currently the sword, the power axe and the
+  // spear — any item held as its own hand-drawn art rather than procedural
+  // geometry — see tools.h) gets its own lean: at -45 it points hard to the right (the
   // lean plus the arm's own -18° roll compound). 45 with the tip below nets
   // out to about 10° to the LEFT — measured by projecting the haft axis
   // through this exact transform chain. Other tools keep the shared lean.
@@ -525,7 +529,13 @@ void drawPlayerModel(const Player& player, const PlayerAnim& anim) {
   // Collect/build/interact: one arm arcs forward-up and back — the right
   // hand collects, the left hand builds.
   if (anim.swing > 0) {
-    if (anim.heldTool >= 0 && !anim.swingLeft) {
+    if (anim.heldTool >= 0 && !anim.swingLeft && toolPokes((uint8_t)anim.heldTool)) {
+      // A spear jabs straight forward, no overhead chop: the windup leaves
+      // the arm near rest, the thrust drives it out horizontal. The
+      // sin envelope fades the pose in and out so it lands back at rest
+      // exactly when the swing ends (a bare phase+1 would pop from 45°).
+      armR += std::sin(anim.swing * PI) * (toolSwingPhase(anim.swing) + 1.0) * 45.0;
+    } else if (anim.heldTool >= 0 && !anim.swingLeft) {
       // Mining with a tool is a smash: the arm winds back and up, then comes
       // down through the blow. Same phase curve the tool itself uses.
       armR += toolSwingPhase(anim.swing) * 80.0;

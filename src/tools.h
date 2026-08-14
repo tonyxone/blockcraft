@@ -30,13 +30,24 @@ const ToolVisual* toolVisualFor(uint8_t id);
 bool isToolItem(uint8_t id);
 
 // True for a tool/weapon held as its own hand-drawn art (art\README.md —
-// currently the sword and the power axe) rather than the generic
+// currently the sword, the power axe and the spear) rather than the generic
 // per-ToolShape box geometry. These are a thin extruded slab, not a
 // silhouette built wide on the axis the camera sees, so both
 // drawGrippedTool and drawFirstPersonArm give them the same extra grip
 // yaw/lean/tip a plain ToolShape-keyed check would miss for anything
 // that isn't literally shaped like a sword.
 bool isSpriteTool(uint8_t id);
+
+// True for a weapon that THRUSTS instead of slashing (the spear): the swing
+// animation becomes a straight jab along the shaft — see drawGrippedTool
+// and the arm poses in playermodel.cpp.
+bool toolPokes(uint8_t item);
+
+// How far a swing with this item reaches against animals and fish (used by
+// main.cpp's tryMine combat raycasts). Every weapon reaches as far as
+// MINE_REACH (2.0) except the spear at 4.0 — reach, not damage, is what a
+// spear is for.
+double attackReach(uint8_t item);
 
 // How much damage a swing with this item does against an animal. The
 // caller (main.cpp's tryMine) passes whatever's gripped in the mainHand

@@ -103,6 +103,12 @@ enum CraftItem : uint8_t {
   // (art\power_axe.png), same convention as ITEM_SWORD/art\sword.png, but
   // held/equipped with the ordinary axe geometry (tools.cpp).
   ITEM_POWER_AXE,
+  // A stone tip on a two-stick shaft (see CRAFT_RECIPES — diagonal, so it
+  // doesn't collide with the stone shovel's identical 1 stone + 2 sticks in
+  // a straight column). Its own hand-drawn icon (art\spear.png), same
+  // convention as ITEM_SWORD/ITEM_POWER_AXE. Pokes rather than slashes, and
+  // out-reaches every other weapon — see attackReach in tools.cpp.
+  ITEM_SPEAR,
   CRAFT_ITEM_COUNT,
 };
 

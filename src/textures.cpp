@@ -403,6 +403,7 @@ const TileDrawer TILE_DRAWERS[TILE_FIRST_ITEM] = {
 const char* spriteNameForTile(int tile) {
   if (tile == TILE_SWORD) return "sword";
   if (tile == TILE_POWER_AXE) return "power_axe";
+  if (tile == TILE_SPEAR) return "spear";
   return nullptr;
 }
 

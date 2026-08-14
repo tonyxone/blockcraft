@@ -134,6 +134,13 @@ const Recipe CRAFT_RECIPES[] = {
   { "Power Axe", ITEM_POWER_AXE, 1, true,
     { "AAA", "...", "..." }, { { 'A', ITEM_STONE_AXE } } },
 
+  // A stone tip on a two-stick shaft. DIAGONAL on purpose: 1 stone + 2
+  // sticks in a straight column is already the stone shovel, so the spear
+  // takes the one layout still free. Its reach, not its power, is the
+  // selling point — see attackReach in tools.cpp.
+  { "Spear", ITEM_SPEAR, 1, false,
+    { "C..", ".S.", "..S" }, { { 'C', BLOCK_STONE }, { 'S', ITEM_STICK } } },
+
   // --- potions -----------------------------------------------------------
   // Shapeless: any 3 (or 6) poppies anywhere in the grid, no crafting table
   // step beyond the grid itself needed.
@@ -356,6 +363,7 @@ const char* craftItemName(uint8_t id) {
     case ITEM_RAW_SHARK: return "raw shark";
     case ITEM_COOKED_FISH: return "cooked fish";
     case ITEM_POWER_AXE: return "power axe";
+    case ITEM_SPEAR: return "spear";
     default: return "?";
   }
 }
@@ -462,6 +470,7 @@ int craftItemTile(uint8_t id) {
     case ITEM_RAW_SHARK: return TILE_RAW_SHARK;
     case ITEM_COOKED_FISH: return TILE_COOKED_FISH;
     case ITEM_POWER_AXE: return TILE_POWER_AXE;
+    case ITEM_SPEAR: return TILE_SPEAR;
     default: return TILE_NONE;
   }
 }
