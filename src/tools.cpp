@@ -163,8 +163,9 @@ const double REST_TILT_DEG = 45.0;
 // -35) turned the head across the body and read as carrying the thing at an
 // angle to yourself.
 const double GRIP_ROLL_DEG = 0.0;
-// Extra haft-spin for the sword only — see drawGrippedTool.
-const double SWORD_GRIP_YAW_DEG = -30.0;
+// Extra haft-spin for hand-drawn sprite tools (isSpriteTool) — see
+// drawGrippedTool.
+const double SPRITE_TOOL_GRIP_YAW_DEG = -30.0;
 // The strike drives the head down and forward past horizontal; the windup
 // before it is smaller, just enough to read as "raise, then smash".
 const double SWING_STRIKE_DEG = 80.0;
@@ -278,6 +279,10 @@ const ToolVisual* toolVisualFor(uint8_t id) {
 
 bool isToolItem(uint8_t id) { return toolVisualFor(id) != nullptr; }
 
+bool isSpriteTool(uint8_t id) {
+  return generatedSpriteNamed(spriteNameForTile(craftItemTile(id))) != nullptr;
+}
+
 double attackPower(uint8_t selectedItemId) {
   switch (selectedItemId) {
     case ITEM_WOOD_PICKAXE:
@@ -333,13 +338,16 @@ void drawGrippedTool(uint8_t item, double swingT) {
   double tilt = -(REST_TILT_DEG + swingDeg);
 
   glPushMatrix();
-  // A sword's blade is a flat slab; held square like every other tool it
-  // presents nearly edge-on in first person — only the thin side shows.
-  // Spinning it a little around the haft turns the flat of the blade toward
-  // the eye, so the sword actually reads as a sword. Verified against the
-  // FP transform chain: -30 degrees visibly widens the blade on screen,
-  // +30 narrows it (fully edge-on).
-  glRotated(GRIP_ROLL_DEG + (v->shape == TOOL_SHAPE_SWORD ? SWORD_GRIP_YAW_DEG : 0), 0, 1, 0);
+  // A sprite tool's art is a flat slab (spriteToolVoxelList extrudes it only
+  // CELL*1.5 deep); held square like the procedural tools it presents nearly
+  // edge-on in first person — only the thin side shows. Spinning it a little
+  // around the haft turns the flat of the art toward the eye, so it actually
+  // reads as what it's drawn as. Verified against the FP transform chain:
+  // -30 degrees visibly widens it on screen, +30 narrows it (fully edge-on).
+  // Keyed on isSpriteTool (any hand-drawn item), not ToolShape — a
+  // shape-only check missed every non-sword item that later got its own
+  // art (the power axe first shipped still held edge-on because of this).
+  glRotated(GRIP_ROLL_DEG + (sprite && sprite->rgba ? SPRITE_TOOL_GRIP_YAW_DEG : 0), 0, 1, 0);
   glRotated(tilt, 1, 0, 0);
 
   if (sprite && sprite->rgba) {

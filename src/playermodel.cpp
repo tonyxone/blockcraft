@@ -425,28 +425,29 @@ void drawFirstPersonArm(double swing, bool leftHand, int heldTool, int winW, int
   // Negative leans the head INWARD, toward the middle of the view, rather
   // than out past the edge of the screen — same angle, mirrored.
   const double FP_TOOL_LEAN_DEG = -45.0;
-  // A sword gets its own lean: at -45 it points hard to the right (the lean
-  // plus the arm's own -18° roll compound). 45 with the tip below nets out
-  // to about 10° to the LEFT — measured by projecting the haft axis through
-  // this exact transform chain. Other tools keep the shared lean.
-  const double FP_SWORD_LEAN_DEG = 45.0;
+  // A sprite tool (isSpriteTool: currently the sword and the power axe, any
+  // item held as its own hand-drawn art rather than procedural geometry —
+  // see tools.h) gets its own lean: at -45 it points hard to the right (the
+  // lean plus the arm's own -18° roll compound). 45 with the tip below nets
+  // out to about 10° to the LEFT — measured by projecting the haft axis
+  // through this exact transform chain. Other tools keep the shared lean.
+  const double FP_SPRITE_LEAN_DEG = 45.0;
   // ...and its own forward TIP, applied in the arm frame BEFORE the lean.
-  // -80° pitches the blade 45° forward into the scene (away from the eye)
+  // -80° pitches the art 45° forward into the scene (away from the eye)
   // instead of straight up. This slot is the one that works: an X-rotation
-  // after the lean only moves the blade toward or past vertical, never
-  // forward — the lean turns that axis sideways, so it has to come first.
-  const double FP_SWORD_TIP_DEG = -80.0;
+  // after the lean only moves it toward or past vertical, never forward —
+  // the lean turns that axis sideways, so it has to come first.
+  const double FP_SPRITE_TIP_DEG = -80.0;
   // Full size, matching the third-person model. This was shrunk to 0.6 while
   // the tool was an extruded slab that filled the frame; against the box
   // model it just made the viewmodel look like it was holding a toy.
   const double FP_TOOL_SCALE = 1.0;
   if (!leftHand && heldTool >= 0) {
-    const ToolVisual* tv = toolVisualFor((uint8_t)heldTool);
-    bool sword = tv && tv->shape == TOOL_SHAPE_SWORD;
-    double lean = sword ? FP_SWORD_LEAN_DEG : FP_TOOL_LEAN_DEG;
+    bool spriteHeld = isSpriteTool((uint8_t)heldTool);
+    double lean = spriteHeld ? FP_SPRITE_LEAN_DEG : FP_TOOL_LEAN_DEG;
     glPushMatrix();
     glTranslated(0, -12, 0);
-    if (sword) glRotated(FP_SWORD_TIP_DEG, 1, 0, 0);
+    if (spriteHeld) glRotated(FP_SPRITE_TIP_DEG, 1, 0, 0);
     glRotated(lean, 0, 0, 1);
     glScaled(FP_TOOL_SCALE, FP_TOOL_SCALE, FP_TOOL_SCALE);
     drawGrippedTool((uint8_t)heldTool, 0.0); // the arm supplies the swing

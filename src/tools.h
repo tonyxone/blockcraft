@@ -29,6 +29,15 @@ struct ToolVisual {
 const ToolVisual* toolVisualFor(uint8_t id);
 bool isToolItem(uint8_t id);
 
+// True for a tool/weapon held as its own hand-drawn art (art\README.md —
+// currently the sword and the power axe) rather than the generic
+// per-ToolShape box geometry. These are a thin extruded slab, not a
+// silhouette built wide on the axis the camera sees, so both
+// drawGrippedTool and drawFirstPersonArm give them the same extra grip
+// yaw/lean/tip a plain ToolShape-keyed check would miss for anything
+// that isn't literally shaped like a sword.
+bool isSpriteTool(uint8_t id);
+
 // How much damage a swing with this item does against an animal. The
 // caller (main.cpp's tryMine) passes whatever's gripped in the mainHand
 // slot when something equippable (toolVisualFor/isToolItem above) is
