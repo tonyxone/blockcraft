@@ -120,6 +120,11 @@ struct Fish {
   bool provoked = false;
   double provokedTimer = 0;
   double attackCooldown = 0;
+
+  // Set by main.cpp the instant a bite actually lands: a brief speed burst
+  // in updateFish so the shark visibly charges at the player at the moment
+  // of the attack, same convention animal.h's Animal::attackLungeTimer uses.
+  double attackLungeTimer = 0;
 };
 
 // Advances one fish's swim AI and physics one frame — wanders in 3D, turning

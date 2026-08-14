@@ -283,11 +283,13 @@ void updateFish(Fish& f, World& world, double dt, const Vec3& playerPos) {
   const double SWIM_SPEED = 0.6;
   const double TURN_SPEED = 1.4;
   const double PROVOKED_SPEED_MULT = 1.6; // a chasing shark is urgent, not ambient
+  const double LUNGE_SPEED_MULT = 3.0;    // the charge itself, well past the chase speed
 
   if (f.provoked) {
     f.provokedTimer -= dt;
     if (f.provokedTimer <= 0) f.provoked = false;
   }
+  if (f.attackLungeTimer > 0) f.attackLungeTimer = std::max(0.0, f.attackLungeTimer - dt);
 
   if (f.provoked && f.species == FISH_SHARK) {
     // Chase: aim straight at the player instead of picking a random
@@ -323,7 +325,8 @@ void updateFish(Fish& f, World& world, double dt, const Vec3& playerPos) {
     }
   }
 
-  double speed = SWIM_SPEED * f.speedMult * f.speedPhaseMult * (f.provoked ? PROVOKED_SPEED_MULT : 1.0);
+  double provokedMult = f.attackLungeTimer > 0 ? LUNGE_SPEED_MULT : (f.provoked ? PROVOKED_SPEED_MULT : 1.0);
+  double speed = SWIM_SPEED * f.speedMult * f.speedPhaseMult * provokedMult;
   double cp = std::cos(f.pitch);
   f.velocity.x = -std::sin(f.yaw) * cp * speed;
   f.velocity.z = -std::cos(f.yaw) * cp * speed;

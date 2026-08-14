@@ -84,6 +84,13 @@ struct Animal {
   double provokedTimer = 0;
   double attackCooldown = 0;
 
+  // Set by main.cpp the instant a bite actually lands (target in range,
+  // cooldown ready): a brief speed burst in updateAnimal so the predator
+  // visibly charges/lunges at the player at the moment of the attack,
+  // instead of the bite landing with no motion of its own beyond the
+  // ordinary chase. Counts down to 0 on its own.
+  double attackLungeTimer = 0;
+
   // Set to the session clock (main.cpp's g_elapsedTime) every time the
   // player lands a hit — main.cpp shows a floating health bar over the
   // animal while it's within 5 seconds of this timestamp, so the bar

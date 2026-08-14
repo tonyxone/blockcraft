@@ -376,6 +376,7 @@ void updateAnimal(Animal& a, World& world, double dt, const Vec3& playerPos) {
   const AnimalSpeciesDef& def = ANIMAL_SPECIES[a.species];
   const double WALK_SPEED = 1.3;
   const double PROVOKED_SPEED_MULT = 1.8; // fleeing/chasing is urgent, not a stroll
+  const double LUNGE_SPEED_MULT = 3.2;    // the charge itself, well past the chase speed
   const double GRAVITY = 28;
   // v^2/2g = 1.29 blocks of rise — clears a single ledge with real margin
   // (the old 7.5 worked out to 1.004, a knife's edge the discrete timestep
@@ -389,6 +390,7 @@ void updateAnimal(Animal& a, World& world, double dt, const Vec3& playerPos) {
     a.provokedTimer -= dt;
     if (a.provokedTimer <= 0) a.provoked = false;
   }
+  if (a.attackLungeTimer > 0) a.attackLungeTimer = std::max(0.0, a.attackLungeTimer - dt);
 
   if (a.provoked) {
     // main.cpp sets this the instant the player lands a hit; from here it's
@@ -399,9 +401,11 @@ void updateAnimal(Animal& a, World& world, double dt, const Vec3& playerPos) {
     double dz = def.predator ? playerPos.z - a.position.z : a.position.z - playerPos.z;
     if (std::fabs(dx) > 1e-6 || std::fabs(dz) > 1e-6) a.targetYaw = std::atan2(-dx, -dz);
     // A chasing predator stops advancing once basically adjacent instead of
-    // continuing to push into the player; a fleeing prey never stops.
+    // continuing to push into the player — UNLESS attackLungeTimer is
+    // running, which forces it to keep moving right through that standstill
+    // so the bite itself reads as a charge, not a stationary nip.
     double distSq = dx * dx + dz * dz;
-    a.moving = !def.predator || distSq > 1.0;
+    a.moving = !def.predator || distSq > 1.0 || a.attackLungeTimer > 0;
     a.wanderTimer = 0.3; // keep re-aiming at the player every tick rather than drifting off target
   } else {
     a.wanderTimer -= dt;
@@ -423,7 +427,8 @@ void updateAnimal(Animal& a, World& world, double dt, const Vec3& playerPos) {
     a.yaw += step;
   }
 
-  double speed = a.moving ? WALK_SPEED * (a.provoked ? PROVOKED_SPEED_MULT : 1.0) : 0.0;
+  double speedMult = a.attackLungeTimer > 0 ? LUNGE_SPEED_MULT : (a.provoked ? PROVOKED_SPEED_MULT : 1.0);
+  double speed = a.moving ? WALK_SPEED * speedMult : 0.0;
   a.velocity.x = -std::sin(a.yaw) * speed;
   a.velocity.z = -std::cos(a.yaw) * speed;
   a.velocity.y = std::max(a.velocity.y - GRAVITY * dt, TERMINAL_FALL_SPEED);

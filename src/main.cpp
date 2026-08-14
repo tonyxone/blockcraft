@@ -2039,12 +2039,13 @@ static void updateFrame(double dt) {
         a.attackCooldown -= dt;
         continue;
       }
-      const double BITE_RANGE = 1.3;
+      const double BITE_RANGE = 1.0;
       double dx = a.position.x - g_player->position.x, dz = a.position.z - g_player->position.z;
       if (dx * dx + dz * dz > BITE_RANGE * BITE_RANGE) continue;
       int dmg = std::max(1, (int)std::lround(attackPowerFor(a.species)));
       g_player->health = std::max(0, g_player->health - dmg);
       a.attackCooldown = 1.2;
+      a.attackLungeTimer = 0.25; // visible charge into the bite, see updateAnimal
       playHitSound();
       if (g_player->health <= 0) {
         g_player->dead = true;
@@ -2095,13 +2096,14 @@ static void updateFrame(double dt) {
         f.attackCooldown -= dt;
         continue;
       }
-      const double SHARK_BITE_RANGE = 2.0;
+      const double SHARK_BITE_RANGE = 1.0;
       double dx = f.position.x - g_player->position.x, dy = f.position.y - g_player->position.y,
              dz = f.position.z - g_player->position.z;
       if (dx * dx + dy * dy + dz * dz > SHARK_BITE_RANGE * SHARK_BITE_RANGE) continue;
       int dmg = std::max(1, (int)std::lround(FISH_SPECIES[f.species].attackPower));
       g_player->health = std::max(0, g_player->health - dmg);
       f.attackCooldown = 1.2;
+      f.attackLungeTimer = 0.25; // visible charge into the bite, see updateFish
       playHitSound();
       if (g_player->health <= 0) {
         g_player->dead = true;
