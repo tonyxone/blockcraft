@@ -129,6 +129,11 @@ const Recipe CRAFT_RECIPES[] = {
   { "The First Sword", ITEM_SWORD, 1, false,
     { "C..", "C..", "CS." }, { { 'C', BLOCK_STONE }, { 'S', ITEM_STICK } } },
 
+  // Forged from 3 stone axes rather than raw material — shapeless, like the
+  // potions below, since it's "3 of these anywhere" not a grid shape.
+  { "Power Axe", ITEM_POWER_AXE, 1, true,
+    { "AAA", "...", "..." }, { { 'A', ITEM_STONE_AXE } } },
+
   // --- potions -----------------------------------------------------------
   // Shapeless: any 3 (or 6) poppies anywhere in the grid, no crafting table
   // step beyond the grid itself needed.
@@ -350,6 +355,7 @@ const char* craftItemName(uint8_t id) {
     case ITEM_RAW_TROPICAL_FISH: return "raw tropical fish";
     case ITEM_RAW_SHARK: return "raw shark";
     case ITEM_COOKED_FISH: return "cooked fish";
+    case ITEM_POWER_AXE: return "power axe";
     default: return "?";
   }
 }
@@ -455,6 +461,7 @@ int craftItemTile(uint8_t id) {
     case ITEM_RAW_TROPICAL_FISH: return TILE_RAW_TROPICAL_FISH;
     case ITEM_RAW_SHARK: return TILE_RAW_SHARK;
     case ITEM_COOKED_FISH: return TILE_COOKED_FISH;
+    case ITEM_POWER_AXE: return TILE_POWER_AXE;
     default: return TILE_NONE;
   }
 }

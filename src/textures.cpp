@@ -402,6 +402,7 @@ const TileDrawer TILE_DRAWERS[TILE_FIRST_ITEM] = {
 // art supplied, keep their procedural drawing — the two coexist per tile.
 const char* spriteNameForTile(int tile) {
   if (tile == TILE_SWORD) return "sword";
+  if (tile == TILE_POWER_AXE) return "power_axe";
   return nullptr;
 }
 

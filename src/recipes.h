@@ -97,6 +97,12 @@ enum CraftItem : uint8_t {
   ITEM_RAW_TROPICAL_FISH,
   ITEM_RAW_SHARK, // dropped by the shark (fish.h) — rare, open-water only
   ITEM_COOKED_FISH,
+  // --- weapons -------------------------------------------------------------
+  // A heavier upgrade forged from stone axes rather than raw material — see
+  // CRAFT_RECIPES (3 stone axes, shapeless). Its own hand-drawn icon
+  // (art\power_axe.png), same convention as ITEM_SWORD/art\sword.png, but
+  // held/equipped with the ordinary axe geometry (tools.cpp).
+  ITEM_POWER_AXE,
   CRAFT_ITEM_COUNT,
 };
 

@@ -35,6 +35,9 @@ const ToolVisual TOOL_VISUALS[] = {
   // blade geometry as ITEM_STONE_SWORD in hand — the art only replaces the
   // 2D icon, per art\README.md.
   { ITEM_SWORD, BLOCK_STONE, BLOCK_WOOD, TOOL_SHAPE_SWORD },
+  // Same deal as ITEM_SWORD above: its own hand-drawn slot icon
+  // (art\power_axe.png), the ordinary stone-tier axe geometry in hand.
+  { ITEM_POWER_AXE, BLOCK_STONE, BLOCK_WOOD, TOOL_SHAPE_AXE },
 };
 const int TOOL_VISUAL_COUNT = (int)(sizeof(TOOL_VISUALS) / sizeof(TOOL_VISUALS[0]));
 
@@ -292,6 +295,8 @@ double attackPower(uint8_t selectedItemId) {
     case ITEM_STONE_SWORD:
       return 2.0;
     case ITEM_SWORD:
+      return 3.0;
+    case ITEM_POWER_AXE: // 3 stone axes forged into one — by request
       return 3.0;
     case ITEM_STICK: // equippable, but deliberately below the bare-hand floor
       return 0.5;
