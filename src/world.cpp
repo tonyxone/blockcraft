@@ -1,5 +1,6 @@
 #include "world.h"
 #include "worldgen.h"
+#include "noise.h"
 #include <unordered_set>
 
 Chunk* World::getChunk(int cx, int cz) {
@@ -11,6 +12,13 @@ bool World::isChunkLoadedAt(int wx, int wz) {
   return getChunk(floorDiv(wx, CHUNK_SIZE), floorDiv(wz, CHUNK_SIZE)) != nullptr;
 }
 
+// Growth-timer jitter for crops re-armed here — same "own little seeded RNG
+// per subsystem" convention fish.cpp/animal.cpp each use.
+namespace {
+Mulberry32 g_cropRng(0x9C0Fu);
+const double CROP_GROWTH_MIN_SECONDS = 40.0, CROP_GROWTH_MAX_SECONDS = 80.0;
+} // namespace
+
 void World::applyEdits(Chunk& chunk) {
   if (edits.empty()) return;
   int ox = chunk.worldOriginX();
@@ -20,6 +28,13 @@ void World::applyEdits(Chunk& chunk) {
     int lz = kv.first.z - oz;
     if (lx >= 0 && lx < CHUNK_SIZE && lz >= 0 && lz < CHUNK_SIZE) {
       chunk.setLocal(lx, kv.first.y, lz, kv.second);
+      // Re-arm growth for a non-mature crop as its chunk is (re)built —
+      // fires both at session start and during ordinary chunk streaming
+      // (see World::cropTimers' own comment).
+      if (isCrop(kv.second) && !isMatureCrop(kv.second)) {
+        cropTimers[kv.first] =
+            CROP_GROWTH_MIN_SECONDS + g_cropRng.next() * (CROP_GROWTH_MAX_SECONDS - CROP_GROWTH_MIN_SECONDS);
+      }
     }
   }
 }

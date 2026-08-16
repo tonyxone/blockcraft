@@ -92,6 +92,7 @@ void saveGame(const SaveState& state, const std::string& name) {
   if (!f) return;
   std::fprintf(f, "BLOCKCRAFT_SAVE 1\n");
   std::fprintf(f, "seed %u\n", state.seed);
+  std::fprintf(f, "timeOfDay %.17g\n", state.timeOfDay);
   std::fprintf(f, "player %.17g %.17g %.17g %.17g %.17g\n",
                state.x, state.y, state.z, state.yaw, state.pitch);
   std::fprintf(f, "selected %d\n", state.selectedSlot);
@@ -149,6 +150,8 @@ bool loadGame(SaveState& out, const std::string& name) {
     if (std::strcmp(word, "seed") == 0) {
       unsigned s = 0;
       if (std::fscanf(f, "%u", &s) == 1) out.seed = (uint32_t)s;
+    } else if (std::strcmp(word, "timeOfDay") == 0) {
+      std::fscanf(f, "%lf", &out.timeOfDay);
     } else if (std::strcmp(word, "player") == 0) {
       if (std::fscanf(f, "%lf %lf %lf %lf %lf", &out.x, &out.y, &out.z, &out.yaw, &out.pitch) == 5) {
         out.hasPlayer = true;

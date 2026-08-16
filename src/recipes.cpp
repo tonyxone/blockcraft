@@ -364,6 +364,9 @@ const char* craftItemName(uint8_t id) {
     case ITEM_COOKED_FISH: return "cooked fish";
     case ITEM_POWER_AXE: return "power axe";
     case ITEM_SPEAR: return "spear";
+    case ITEM_WHEAT: return "wheat";
+    case ITEM_CARROT: return "carrot";
+    case ITEM_POTATO: return "potato";
     default: return "?";
   }
 }
@@ -377,6 +380,9 @@ bool isEatableFood(uint8_t id) {
     case ITEM_PEAR:
     case ITEM_CHERRY:
     case ITEM_ORANGE:
+    case ITEM_WHEAT:
+    case ITEM_CARROT:
+    case ITEM_POTATO:
       return true;
     default:
       return false;
@@ -471,6 +477,9 @@ int craftItemTile(uint8_t id) {
     case ITEM_COOKED_FISH: return TILE_COOKED_FISH;
     case ITEM_POWER_AXE: return TILE_POWER_AXE;
     case ITEM_SPEAR: return TILE_SPEAR;
+    case ITEM_WHEAT: return TILE_WHEAT;
+    case ITEM_CARROT: return TILE_CARROT;
+    case ITEM_POTATO: return TILE_POTATO;
     default: return TILE_NONE;
   }
 }

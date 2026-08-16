@@ -78,6 +78,13 @@ const uint32_t FISH_SHARK_DARK = 0x2e3033, FISH_SHARK_DARK_D = 0x1c1d1f;
 const uint32_t FISH_COOKED_BODY = 0x9a6a3a, FISH_COOKED_BODY_D = 0x6e4a24;
 const uint32_t FISH_COOKED_HI = 0xc99a5c, FISH_COOKED_HI_D = 0xa06a3a;
 const uint32_t FISH_COOKED_DARK = 0x5a3a1c, FISH_COOKED_DARK_D = 0x3a2410;
+// Crop palettes.
+const uint32_t WHEAT_HEAD = 0xe8c53a, WHEAT_HEAD_D = 0xc79f1e;
+const uint32_t WHEAT_STALK = 0xc9a227, WHEAT_STALK_D = 0x9c7a18;
+const uint32_t CARROT_ORANGE = 0xe8791e, CARROT_ORANGE_D = 0xb85913;
+const uint32_t CARROT_ORANGE_DARK = 0x8f4a10, CARROT_ORANGE_DARK_D = 0x6e3a0c;
+const uint32_t POTATO_BASE = 0xa67c4a, POTATO_BASE_D = 0x7a5230;
+const uint32_t POTATO_HI = 0xc9a06a, POTATO_HI_D = 0xa67c4a;
 
 // --- tool shapes -----------------------------------------------------------
 // 'H' head / business end, 'S' shaft. Shared between material tiers: a wooden
@@ -812,6 +819,72 @@ const char* const SHARK_ROWS[TILE_PX] = {
   "................",
 };
 
+// A bundled sheaf: three golden stalks each capped with a small grain-head
+// cluster, gathered and tied with a dark band a little below the middle —
+// the "harvested wheat" silhouette, distinct from a single fruit's round
+// shape.
+const char* const WHEAT_ROWS[TILE_PX] = {
+  "................",
+  ".....H..HH..H...",
+  ".....H..HH..H...",
+  ".....M..MM..M...",
+  ".....M..MM..M...",
+  ".....M..MM..M...",
+  ".....M..MM..M...",
+  ".....M..MM..M...",
+  ".....M..MM..M...",
+  ".....M..MM..M...",
+  ".....DDDDDDDD...",
+  "......MMMM......",
+  "......MMMM......",
+  ".......MM.......",
+  ".......MM.......",
+  "................",
+};
+
+// A leafy green top over a tapering orange root — the familiar carrot
+// silhouette, root pointing straight down.
+const char* const CARROT_ROWS[TILE_PX] = {
+  "................",
+  ".....L.L.L......",
+  ".....LLLLL......",
+  "......LLL.......",
+  ".....HHMMMDD....",
+  "......HMMMD.....",
+  "......HMMMD.....",
+  ".......HMD......",
+  ".......HMD......",
+  "........MD......",
+  "........MD......",
+  "........M.......",
+  "........M.......",
+  "................",
+  "................",
+  "................",
+};
+
+// A lumpy tan-brown tuber with a couple of small dark "eyes" — round rather
+// than tapering, the give-away that separates it from the carrot at a
+// glance despite the similar earthy coloring.
+const char* const POTATO_ROWS[TILE_PX] = {
+  "................",
+  "................",
+  "......MMMM......",
+  ".....MMMMMM.....",
+  "....MMHMMMMDD...",
+  "...MMMMMMMMMDD..",
+  "...MMMMEMMMMDD..",
+  "...MMMMMMMMMDD..",
+  "....MMMMMMMDD...",
+  ".....MMMMMDD....",
+  "......MMMDD.....",
+  "................",
+  "................",
+  "................",
+  "................",
+  "................",
+};
+
 // Round body instead of elongated, with spikes ('P') at top/bottom/left/
 // right the way the puffed-up reference render (Pufferfish_large_JE1.gif)
 // bristles all over — the one fish shape that isn't a side-profile "swimming
@@ -1106,6 +1179,20 @@ const ItemArt ART_COOKED_FISH = {
              { 'E', SHADOW, SHADOW_D } }
 };
 
+const ItemArt ART_WHEAT = {
+  WHEAT_ROWS, { { 'H', WHEAT_HEAD, WHEAT_HEAD_D }, { 'M', WHEAT_STALK, WHEAT_STALK_D },
+               { 'D', DARKWOOD, DARKWOOD_D } }
+};
+const ItemArt ART_CARROT = {
+  CARROT_ROWS, { { 'L', LEAF_GREEN, LEAF_GREEN_D }, { 'H', ORANGE_HI, ORANGE_HI_D },
+                { 'M', CARROT_ORANGE, CARROT_ORANGE_D },
+                { 'D', CARROT_ORANGE_DARK, CARROT_ORANGE_DARK_D } }
+};
+const ItemArt ART_POTATO = {
+  POTATO_ROWS, { { 'H', POTATO_HI, POTATO_HI_D }, { 'M', POTATO_BASE, POTATO_BASE_D },
+                { 'D', POTATO_BASE_D, 0x5c3c20 }, { 'E', SHADOW, SHADOW_D } }
+};
+
 // World textures for the placed blocks.
 const ItemArt BLK_PLANKS = { BLK_PLANKS_ROWS, { { 'M', WOOD, WOOD_D }, { 'D', DARKWOOD, DARKWOOD_D } } };
 const ItemArt BLK_BRICKS = { BLK_BRICKS_ROWS, { { 'M', STONE, STONE_D }, { 'D', 0x6f6f73, 0x4f4f53 } } };
@@ -1193,6 +1280,9 @@ const ItemArt* itemArtForTile(int tile) {
     case TILE_RAW_TROPICAL_FISH: return &ART_RAW_TROPICAL_FISH;
     case TILE_RAW_SHARK: return &ART_RAW_SHARK;
     case TILE_COOKED_FISH: return &ART_COOKED_FISH;
+    case TILE_WHEAT: return &ART_WHEAT;
+    case TILE_CARROT: return &ART_CARROT;
+    case TILE_POTATO: return &ART_POTATO;
     case TILE_WOOD_PICKAXE: return &ART_WOOD_PICKAXE;
     case TILE_STONE_PICKAXE: return &ART_STONE_PICKAXE;
     case TILE_WOOD_AXE: return &ART_WOOD_AXE;

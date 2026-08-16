@@ -322,6 +322,111 @@ void drawLeavesOrange(TileCtx& c, Mulberry32& rng) {
   drawFruitOnLeaves(c, rng, hex(0xf5921e), hex(0xc9720f), hex(0xffb84f));
 }
 
+// Tilled soil: dirt speckle (drawDirt's own palette) with darker furrow
+// rows cut across it every few pixels, reading as a plowed field rather
+// than plain dirt.
+void drawFarmlandTop(TileCtx& c, Mulberry32& rng) {
+  speckle(c, rng, hex(0x6b4a2c), hex(0x4a3018), hex(0x8a6440), 0.35, 0.12);
+  for (int y = 1; y < TILE_PX; y += 4) {
+    for (int x = 0; x < TILE_PX; x++) {
+      c.setFill(mix(hex(0x3a2414), hex(0x241608), rng.next() * 0.3));
+      c.fillRect(x, y, 1, 1);
+    }
+  }
+}
+
+// Shared "young growth" look for a crop's first 3 stages (0-2) — a handful
+// of short, sparse blades rising from the bottom edge of the tile, same
+// billboard-on-transparent-field idea as drawTallGrass/drawFlowerStem, just
+// shorter and sparser than either (a seedling, not a full tuft or a
+// flower). The stage-to-stage growth a player actually sees comes from the
+// mesher varying the billboard's HEIGHT per stage (see mesher.cpp), not
+// from separate art per stage.
+void drawCropSprout(TileCtx& c, Mulberry32& rng, Color leaf, Color leafDark) {
+  int cx = TILE_PX / 2;
+  const int OFFS[3] = { -2, 0, 2 };
+  for (int off : OFFS) {
+    int h = 3 + (int)(rng.next() * 3);
+    int x = cx + off;
+    if (x < 0 || x >= TILE_PX) continue;
+    for (int k = 0; k < h; k++) {
+      c.setFill(mix(leaf, leafDark, rng.next() * 0.3));
+      c.fillRect(x, TILE_PX - 1 - k, 1, 1);
+    }
+  }
+}
+
+// Wheat: golden stalks (taller than the sprout look) each capped with a
+// small grain-head cluster — the one crop whose mature stage reads as
+// "harvestable stalks" rather than "bushier leaves."
+void drawWheatSprout(TileCtx& c, Mulberry32& rng) {
+  drawCropSprout(c, rng, hex(0x6fae3a), hex(0x4a8a1e));
+}
+void drawWheatMature(TileCtx& c, Mulberry32& rng) {
+  int cx = TILE_PX / 2;
+  const int OFFS[3] = { -2, 0, 2 };
+  Color stalk = hex(0xc9a227), stalkDark = hex(0x9c7a18), head = hex(0xe8c53a);
+  for (int off : OFFS) {
+    int h = 9 + (int)(rng.next() * 3);
+    int x = cx + off;
+    if (x < 0 || x >= TILE_PX) continue;
+    for (int k = 0; k < h; k++) {
+      c.setFill(mix(stalk, stalkDark, rng.next() * 0.3));
+      c.fillRect(x, TILE_PX - 1 - k, 1, 1);
+    }
+    c.setFill(head);
+    c.fillRect(x, TILE_PX - h - 1, 1, 2);
+  }
+}
+
+// Carrot: a bushier leafy top than wheat's thin blades, with a hint of the
+// orange root peeking through the soil at full growth — the give-away
+// that separates it from potato's own bushy-but-flowering mature look.
+void drawCarrotSprout(TileCtx& c, Mulberry32& rng) {
+  drawCropSprout(c, rng, hex(0x3f8f2a), hex(0x256b16));
+}
+void drawCarrotMature(TileCtx& c, Mulberry32& rng) {
+  int cx = TILE_PX / 2;
+  const int OFFS[5] = { -3, -1, 0, 1, 3 };
+  for (int off : OFFS) {
+    int h = 7 + (int)(rng.next() * 3);
+    int x = cx + off;
+    if (x < 0 || x >= TILE_PX) continue;
+    for (int k = 0; k < h; k++) {
+      c.setFill(mix(hex(0x3f8f2a), hex(0x256b16), rng.next() * 0.3));
+      c.fillRect(x, TILE_PX - 1 - k, 1, 1);
+    }
+  }
+  c.setFill(hex(0xd9701e));
+  c.fillRect(cx - 1, TILE_PX - 1, 2, 1);
+}
+
+// Potato: the same bushy leafy top as carrot, but small white flowers
+// scattered near the crown at full growth instead of a peek of root color.
+void drawPotatoSprout(TileCtx& c, Mulberry32& rng) {
+  drawCropSprout(c, rng, hex(0x4f9c3a), hex(0x2f6b1e));
+}
+void drawPotatoMature(TileCtx& c, Mulberry32& rng) {
+  int cx = TILE_PX / 2;
+  const int OFFS[5] = { -3, -1, 0, 1, 3 };
+  for (int off : OFFS) {
+    int h = 8 + (int)(rng.next() * 3);
+    int x = cx + off;
+    if (x < 0 || x >= TILE_PX) continue;
+    for (int k = 0; k < h; k++) {
+      c.setFill(mix(hex(0x4f9c3a), hex(0x2f6b1e), rng.next() * 0.3));
+      c.fillRect(x, TILE_PX - 1 - k, 1, 1);
+    }
+  }
+  const int FLOWERS[3][2] = { { -2, 7 }, { 1, 8 }, { -1, 6 } };
+  for (const auto& f : FLOWERS) {
+    int x = cx + f[0], y = TILE_PX - 1 - f[1];
+    if (x < 0 || x >= TILE_PX || y < 0 || y >= TILE_PX) continue;
+    c.setFill(hex(0xf0f0e8));
+    c.fillRect(x, y, 1, 1);
+  }
+}
+
 // Sprites need a dark outline to read against the inventory slot: the stone
 // gray used for tool heads (0x8a8a8e) is almost exactly the slot's own gray
 // (0x8b8b8b), so an un-outlined pickaxe head would be invisible.
@@ -393,6 +498,10 @@ const TileDrawer TILE_DRAWERS[TILE_FIRST_ITEM] = {
   drawSnow, drawIce, drawRedrock, drawTallGrass, drawCoal,
   drawFlowerPoppy, drawFlowerDandelion, drawFlowerDaisy, drawFlowerCornflower,
   drawLeavesApple, drawLeavesPeach, drawLeavesPear, drawLeavesCherry, drawLeavesOrange,
+  drawFarmlandTop,
+  drawWheatSprout, drawWheatMature,
+  drawCarrotSprout, drawCarrotMature,
+  drawPotatoSprout, drawPotatoMature,
 };
 
 } // namespace

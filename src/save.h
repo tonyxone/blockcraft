@@ -36,6 +36,7 @@ struct SaveState {
   bool hasPlayer = false;
   double x = 0, y = 0, z = 0, yaw = 0, pitch = 0;
   uint32_t seed = 1337; // terrain seed (old saves without one get 1337)
+  double timeOfDay = 0.25; // 0..1 fraction of a day (main.cpp's g_timeOfDay); old saves without one get morning
   std::vector<int> hotbarCounts; // empty = fresh defaults
   int selectedSlot = -1;         // -1 = not saved
   std::vector<int> invIds;    // inventory slot block ids (empty = not saved)

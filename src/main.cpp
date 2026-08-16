@@ -13,6 +13,7 @@
 #include "furnace.h"
 #include "campfire.h"
 #include "worldgen.h"
+#include "noise.h"
 #include "mesher.h"
 #include "physics.h"
 #include "player.h"
@@ -122,6 +123,11 @@ static bool g_chestOpen = false; // chest screen overlay (E key on a chest)
 static bool g_fullMapOpen = false; // whole-world map overlay (M key)
 static int g_chestX = 0, g_chestY = 0, g_chestZ = 0; // which chest is showing
 static uint32_t g_currentSeed = 1337; // this session's terrain seed
+// 0..1 fraction of a day (0 = midnight, 0.25 = dawn/morning, 0.5 = noon, 0.75
+// = dusk), advanced every frame in updateFrame() and persisted in SaveState
+// so a reload resumes at roughly the same time — see dayNightState() below.
+static double g_timeOfDay = 0.25;
+const double DAY_LENGTH_SECONDS = 1200.0; // 20 minutes per full day/night cycle
 static Menu g_menu;
 static Settings g_settings;
 
@@ -226,6 +232,7 @@ static void createSession(const SaveState* save) {
   // every new game gets a fresh random map; loads restore their saved seed
   g_currentSeed = save ? save->seed : randomSeed();
   setWorldSeed(g_currentSeed);
+  g_timeOfDay = save ? save->timeOfDay : 0.25;
 
   g_world = std::make_unique<World>();
   g_world->renderDistance = g_settings.renderDistance;
@@ -444,6 +451,7 @@ static void performSave(const std::string& name) {
   if (!g_world || !g_player || !g_hotbar) return;
   SaveState s;
   s.seed = g_currentSeed;
+  s.timeOfDay = g_timeOfDay;
   s.hasPlayer = true;
   s.x = g_player->position.x;
   s.y = g_player->position.y;
@@ -711,9 +719,12 @@ static bool nearBed() {
 
 // Sleeping (E key, near a bed): resets health to full for free, at the cost
 // of hunger draining twice as fast for a while afterward (player.h's
-// hungerBoostTimer does the actual math in Player::update). This game has
-// no day/night cycle to skip past like vanilla Minecraft's own bed does —
-// sleeping here is purely the health/hunger tradeoff.
+// hungerBoostTimer does the actual math in Player::update). A day/night
+// cycle exists now (g_timeOfDay), but sleeping deliberately does NOT skip
+// past it — whether it should is a real gameplay-balance call (free-heal-
+// anytime vs. gated-by-night) that deserves its own decision, not a silent
+// side effect here — so for now this stays purely the health/hunger
+// tradeoff it always was.
 const double SLEEP_HUNGER_BOOST_DURATION = 60.0; // ~2 extra hunger points lost over that span
 static void trySleep() {
   if (!g_player || !nearBed()) return;
@@ -869,6 +880,19 @@ static void tryMine() {
   uint8_t id = g_world->getBlock(hit.pos[0], hit.pos[1], hit.pos[2]);
   if (!isMinable(id)) return; // covers placed crafted goods, not just blocks
 
+  // Tilling: a hoe EQUIPPED in mainHand (not merely hotbar-selected — same
+  // slot the combat swing above resolves its weapon from) turns a targeted
+  // grass/dirt block into farmland instead of mining it. Using the tool is
+  // the point of the swing here, so this preempts the generic mine-and-
+  // collect fallback below entirely rather than collecting grass as dirt.
+  bool holdingHoe = g_inventory && (g_inventory->mainHand.blockId == ITEM_WOOD_HOE ||
+                                     g_inventory->mainHand.blockId == ITEM_STONE_HOE);
+  if (holdingHoe && (id == BLOCK_GRASS || id == BLOCK_DIRT)) {
+    remeshAll(g_world->setBlock(hit.pos[0], hit.pos[1], hit.pos[2], BLOCK_FARMLAND));
+    playPlaceSound();
+    return;
+  }
+
   if (isPanel(id)) {
     // A ladder is placed (and extended) as one connected vertical run of up
     // to LADDER_PLACE_LENGTH blocks per item spent; mine any block of it and
@@ -981,6 +1005,20 @@ static void tryMine() {
     return;
   }
 
+  if (isCrop(id)) {
+    // The crop occupies its OWN cell, one above the farmland it was planted
+    // on (see tryPlantCrop) — clearing it to air just exposes the farmland
+    // underneath again, already untouched, ready to replant. Mirrors the
+    // flower branch above: mining any stage clears it, but only a MATURE
+    // crop actually yields its item.
+    int cx = hit.pos[0], cy = hit.pos[1], cz = hit.pos[2];
+    remeshAll(g_world->setBlock(cx, cy, cz, BLOCK_AIR));
+    g_world->cropTimers.erase({ cx, cy, cz });
+    if (isMatureCrop(id)) g_inventory->collect(*g_hotbar, (uint8_t)cropItemFor(id), 1);
+    playMineSound();
+    return;
+  }
+
   if (isStairs(id)) g_world->stairFacings.erase({ hit.pos[0], hit.pos[1], hit.pos[2] });
   if (isFurnace(id)) g_world->furnaces.erase({ hit.pos[0], hit.pos[1], hit.pos[2] });
   std::vector<Chunk*> affected = g_world->setBlock(hit.pos[0], hit.pos[1], hit.pos[2], BLOCK_AIR);
@@ -1036,6 +1074,19 @@ static void pickFlower(int x, int y, int z, uint8_t id) {
   playMineSound();
 }
 
+// E on a MATURE crop: harvests it, clearing its own cell to air (exposing
+// the farmland underneath, untouched — same geometry note as tryMine's own
+// crop branch) and granting the item. Callers gate on isMatureCrop
+// themselves (the interact prompt and the E-key dispatch both check before
+// calling this), same as every other E-triggered action here.
+static void harvestCrop(int x, int y, int z, uint8_t id) {
+  if (!g_world || !g_inventory) return;
+  remeshAll(g_world->setBlock(x, y, z, BLOCK_AIR));
+  g_world->cropTimers.erase({ x, y, z });
+  g_inventory->collect(*g_hotbar, (uint8_t)cropItemFor(id), 1);
+  playMineSound();
+}
+
 // The player's horizontal look direction, snapped to the nearest of the 4
 // cardinal directions: 0 -Z, 1 +Z, 2 -X, 3 +X (matching panelFacing's/
 // stairFacing's convention). Used to orient whatever gets placed toward
@@ -1055,8 +1106,69 @@ static bool placementOverlapsPlayer(int px, int py, int pz) {
          py < p.y + PLAYER_HEIGHT;
 }
 
+// Growth pacing shared by tryPlantCrop's initial timer and updateCropGrowth's
+// re-roll below — same range World::applyEdits' own re-arm uses (world.cpp),
+// kept in sync by hand since the two are in different translation units.
+static const double CROP_GROWTH_MIN_SECONDS = 40.0, CROP_GROWTH_MAX_SECONDS = 80.0;
+static Mulberry32 g_cropGrowthRng(0x6E17u);
+
+// Planting: right-click a crop item at farmland within reach places its
+// stage-0 growth block in the cell above it — the harvested crop item
+// doubles as its own seed (blocks.h's cropBaseBlockForItem), same as a real
+// carrot/potato. Same tryPlaceBoat()-style special case, checked ahead of
+// the normal build logic since a crop plants a DIFFERENT block than the
+// item consumed (the generic path below would place the item's own id).
+static bool tryPlantCrop() {
+  if (!g_world || !g_hotbar) return false;
+  int baseBlock = cropBaseBlockForItem((uint8_t)g_hotbar->selectedBlockId());
+  if (baseBlock < 0) return false;
+  RaycastHit hit;
+  if (!targetedBlock(hit, PLACE_REACH)) return false;
+  if (g_world->getBlock(hit.pos[0], hit.pos[1], hit.pos[2]) != BLOCK_FARMLAND) return false;
+  int px = hit.pos[0], py = hit.pos[1] + 1, pz = hit.pos[2];
+  if (g_world->getBlock(px, py, pz) != BLOCK_AIR) return false;
+  if (placementOverlapsPlayer(px, py, pz)) return false;
+  if (g_hotbar->takeSelected() < 0) return false;
+  remeshAll(g_world->setBlock(px, py, pz, (uint8_t)baseBlock));
+  g_world->cropTimers[{ px, py, pz }] = CROP_GROWTH_MIN_SECONDS +
+      g_cropGrowthRng.next() * (CROP_GROWTH_MAX_SECONDS - CROP_GROWTH_MIN_SECONDS);
+  playPlaceSound();
+  return true;
+}
+
+// Advances every planted crop's growth timer
+// the block on to its next stage on expiry. Called every frame alongside
+// updateChestAnimations/updateDoorAnimations/updateTrapdoorAnimations —
+// same "always ticking while playing" cadence.
+static void updateCropGrowth(double dt) {
+  for (auto it = g_world->cropTimers.begin(); it != g_world->cropTimers.end();) {
+    it->second -= dt;
+    if (it->second > 0) { ++it; continue; }
+    const EditKey& k = it->first;
+    uint8_t id = g_world->getBlock(k.x, k.y, k.z);
+    if (!isCrop(id) || isMatureCrop(id)) {
+      it = g_world->cropTimers.erase(it); // no longer a growing crop here
+      continue;
+    }
+    uint8_t next = nextCropStage(id);
+    remeshAll(g_world->setBlock(k.x, k.y, k.z, next));
+    if (isMatureCrop(next)) {
+      it = g_world->cropTimers.erase(it); // fully grown: nothing left to time
+    } else {
+      it->second = CROP_GROWTH_MIN_SECONDS +
+                   g_cropGrowthRng.next() * (CROP_GROWTH_MAX_SECONDS - CROP_GROWTH_MIN_SECONDS);
+      ++it;
+    }
+  }
+}
+
 static void tryPlace() {
   if (!g_world || !g_player) return;
+  // Planting is E (see the WM_KEYDOWN 'E' handler's BLOCK_FARMLAND branch),
+  // not right-click — matching harvest, which is also E, not left-click.
+  // wheat/carrots/potatoes are dual-purpose (isEatableFood AND plantable),
+  // so right-click while one is selected just eats it, same as any other
+  // food item.
   if (tryEatSelected()) return;
   if (tryEatRawUnsafe()) return;
   if (tryDrinkSelected()) return;
@@ -1291,6 +1403,46 @@ static void underwaterTint(double depth, WaterView& out) {
 // Recomputed once per frame, before rendering.
 static WaterView g_waterView;
 
+// Sky/fog color and a 0..1 "darkness" factor, driven by g_timeOfDay. No
+// dynamic lighting exists in this engine (every face's shading is baked at
+// mesh time — see mesher.cpp's FACES), so night isn't relit geometry: it's
+// this color shift plus a full-screen dark tint (drawn the same way
+// WaterView's own submerged tint is, see render() below).
+struct DayNightKeyframe { double t, r, g, b, darkness; };
+const DayNightKeyframe DAY_NIGHT_KEYFRAMES[] = {
+  { 0.00, 0.04, 0.05, 0.12, 0.85 }, // midnight
+  { 0.22, 0.12, 0.09, 0.16, 0.55 }, // pre-dawn
+  { 0.30, 0.95, 0.55, 0.30, 0.10 }, // dawn glow
+  { 0.40, SKY_R, SKY_G, SKY_B, 0.0 }, // morning: full day
+  { 0.60, SKY_R, SKY_G, SKY_B, 0.0 }, // afternoon: still full day
+  { 0.70, 0.95, 0.45, 0.25, 0.10 }, // dusk glow
+  { 0.80, 0.10, 0.07, 0.14, 0.55 }, // early night
+  { 1.00, 0.04, 0.05, 0.12, 0.85 }, // midnight again (wraps back to t=0)
+};
+const int DAY_NIGHT_KEYFRAME_COUNT = (int)(sizeof(DAY_NIGHT_KEYFRAMES) / sizeof(DAY_NIGHT_KEYFRAMES[0]));
+
+// Pure function (no GL context needed), same convention underwaterTint above
+// documents — lerps between the two bracketing keyframes with a smoothstep
+// ease so the transition has no visible hinge at each keyframe.
+static void dayNightState(double t, double& skyR, double& skyG, double& skyB, double& darkness) {
+  t = std::fmod(t, 1.0);
+  if (t < 0) t += 1.0;
+  int i = 0;
+  while (i < DAY_NIGHT_KEYFRAME_COUNT - 2 && DAY_NIGHT_KEYFRAMES[i + 1].t <= t) i++;
+  const DayNightKeyframe& a = DAY_NIGHT_KEYFRAMES[i];
+  const DayNightKeyframe& b = DAY_NIGHT_KEYFRAMES[i + 1];
+  double span = b.t - a.t;
+  double localT = span > 1e-9 ? (t - a.t) / span : 0.0;
+  double s = localT * localT * (3 - 2 * localT); // smoothstep
+  skyR = a.r + (b.r - a.r) * s;
+  skyG = a.g + (b.g - a.g) * s;
+  skyB = a.b + (b.b - a.b) * s;
+  darkness = a.darkness + (b.darkness - a.darkness) * s;
+}
+
+// Recomputed once per frame, before rendering, alongside g_waterView.
+static double g_skyR = SKY_R, g_skyG = SKY_G, g_skyB = SKY_B, g_darkness = 0;
+
 static WaterView waterViewState() {
   WaterView view;
   if (!g_world || !g_player) return view;
@@ -1433,7 +1585,7 @@ static void setup3D() {
   } else {
     // fog matches THREE.Fog(sky, CS*(rd-1.5), CS*(rd+0.5))
     int rd = g_world->renderDistance;
-    GLfloat fogColor[4] = { (GLfloat)SKY_R, (GLfloat)SKY_G, (GLfloat)SKY_B, 1.0f };
+    GLfloat fogColor[4] = { (GLfloat)g_skyR, (GLfloat)g_skyG, (GLfloat)g_skyB, 1.0f };
     glFogfv(GL_FOG_COLOR, fogColor);
     glFogf(GL_FOG_START, (GLfloat)(CHUNK_SIZE * (rd - 1.5)));
     glFogf(GL_FOG_END, (GLfloat)(CHUNK_SIZE * (rd + 0.5)));
@@ -1490,6 +1642,25 @@ static void drawInteractPrompt() {
         label = "Press E to pick fruit";
       } else if (isFlower(id)) {
         label = "Press E to pick flower";
+      } else if (isMatureCrop(id)) {
+        label = "Press E to harvest";
+      } else if (isCrop(id)) {
+        // Temporary growth-debug readout (diagnosing a report of crops never
+        // advancing) — shows the live cropTimers entry for exactly the cell
+        // being looked at, so a stalled timer or a missing entry is visible
+        // in-game instead of only inferred from waiting.
+        static char growLabel[64];
+        auto it = g_world->cropTimers.find({ hx, hy, hz });
+        if (it == g_world->cropTimers.end()) {
+          std::snprintf(growLabel, sizeof(growLabel), "stage %d/4, NO TIMER", cropStage(id) + 1);
+        } else {
+          std::snprintf(growLabel, sizeof(growLabel), "stage %d/4, %.0fs left", cropStage(id) + 1,
+                        it->second);
+        }
+        label = growLabel;
+      } else if (id == BLOCK_FARMLAND && g_hotbar &&
+                 cropBaseBlockForItem((uint8_t)g_hotbar->selectedBlockId()) >= 0) {
+        label = "Press E to plant";
       }
     }
   }
@@ -1737,12 +1908,13 @@ static void drawEntityHealthBars() {
 static void render() {
   glViewport(0, 0, g_winW, g_winH);
   g_waterView = waterViewState();
+  dayNightState(g_timeOfDay, g_skyR, g_skyG, g_skyB, g_darkness);
   if (g_world) {
     if (g_waterView.submerged) {
       // no sky underwater: the background is the water itself
       glClearColor((GLfloat)g_waterView.r, (GLfloat)g_waterView.g, (GLfloat)g_waterView.b, 1);
     } else {
-      glClearColor((GLfloat)SKY_R, (GLfloat)SKY_G, (GLfloat)SKY_B, 1);
+      glClearColor((GLfloat)g_skyR, (GLfloat)g_skyG, (GLfloat)g_skyB, 1);
     }
   } else {
     glClearColor(0, 0, 0, 1);
@@ -1927,9 +2099,15 @@ static void render() {
 
   begin2D(g_winW, g_winH);
   // Submerged tint over the whole frame, under the HUD so it stays readable.
+  // Mutually exclusive with the night tint below — same reason clouds are
+  // already skipped underwater (main.cpp's drawClouds call): nothing of the
+  // sky/night is visible from down there, and stacking both would just
+  // double-darken the screen.
   if (g_waterView.submerged) {
     drawRect(0, 0, g_winW, g_winH, g_waterView.r, g_waterView.g, g_waterView.b,
              g_waterView.tintAlpha);
+  } else if (g_darkness > 0) {
+    drawRect(0, 0, g_winW, g_winH, 0.02, 0.03, 0.10, g_darkness * 0.75);
   }
   if (g_world && g_hotbar && !g_invOpen && !g_chestOpen && !g_fullMapOpen) g_hotbar->draw(g_winW, g_winH);
   if (g_state == GameState::Playing && !g_invOpen && !g_chestOpen && !g_fullMapOpen) {
@@ -1985,9 +2163,11 @@ static void updateFrame(double dt) {
   if (g_hudMsgTimer > 0) g_hudMsgTimer -= dt;
 
   if (g_state == GameState::Playing && g_world && g_player) {
+    g_timeOfDay = std::fmod(g_timeOfDay + dt / DAY_LENGTH_SECONDS, 1.0);
     updateChestAnimations(*g_world, dt); // lids ease open/closed even while the screen has the cursor
     updateDoorAnimations(*g_world, dt);
     updateTrapdoorAnimations(*g_world, dt);
+    updateCropGrowth(dt);
 
     if (g_cursorCaptured) {
       // accumulate relative mouse movement by recentering the cursor
@@ -2271,6 +2451,10 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
               pickFruitFromLeaves(hit.pos[0], hit.pos[1], hit.pos[2], id);
             } else if (isFlower(id)) {
               pickFlower(hit.pos[0], hit.pos[1], hit.pos[2], id);
+            } else if (isMatureCrop(id)) {
+              harvestCrop(hit.pos[0], hit.pos[1], hit.pos[2], id);
+            } else if (id == BLOCK_FARMLAND) {
+              tryPlantCrop(); // no-ops if the hotbar selection isn't a crop item
             }
           }
         }
@@ -3004,6 +3188,75 @@ static int runScreenshotMode(const char* path) {
 
   teardownSession();
   return ok ? 0 : 1;
+}
+
+// Diagnostic-only capture (not part of the regular --screenshot sweep):
+// tills a patch, plants wheat through the REAL tryMine()/tryPlace() click
+// handlers exactly like a player would, then forces the same planted block
+// through all 4 growth stages one at a time, screenshotting each — close up,
+// aimed straight at it, so drawInteractPrompt's growth-debug readout is
+// visible in frame. Answers "does the block/texture/readout actually change"
+// directly, instead of only inferring it from getBlock() in selftest.
+static int runCropTestMode() {
+  SaveState fixedSeed;
+  fixedSeed.seed = 1337;
+  createSession(&fixedSeed);
+  g_state = GameState::Playing;
+  g_world->updateLoadedChunks(9, 9);
+
+  auto lookAt = [&](double tx, double ty, double tz) {
+    Vec3 eye = g_player->eyePosition();
+    double dx = tx - eye.x, dy = ty - eye.y, dz = tz - eye.z;
+    double horiz = std::sqrt(dx * dx + dz * dz);
+    g_player->pitch = std::atan2(dy, horiz);
+    g_player->yaw = std::atan2(-dx, -dz);
+  };
+  auto pump = [&]() {
+    MSG msg;
+    while (PeekMessageA(&msg, nullptr, 0, 0, PM_REMOVE)) {
+      TranslateMessage(&msg);
+      DispatchMessageA(&msg);
+    }
+    render();
+    SwapBuffers(g_dc);
+  };
+
+  for (int bx = 8; bx <= 11; bx++) {
+    for (int bz = 8; bz <= 11; bz++) remeshAll(g_world->setBlock(bx, 43, bz, BLOCK_GRASS));
+  }
+  g_player->position = Vec3(9.5, 44.0, 8.5);
+  lookAt(9.5, 43.5, 9.5);
+
+  g_inventory->mainHand = { ITEM_WOOD_HOE, 1 };
+  tryMine(); // till: real left-click-with-equipped-hoe path
+
+  g_hotbar->slots[0] = { ITEM_WHEAT, 5 };
+  g_hotbar->select(0);
+  lookAt(9.5, 43.5, 9.5);
+  tryPlantCrop(); // plant: real E-key path
+
+  g_player->position = Vec3(9.5, 44.0, 8.3); // close and level with the crop cell
+  lookAt(9.5, 44.3, 9.5);
+
+  const uint8_t stages[4] = { BLOCK_WHEAT_0, BLOCK_WHEAT_1, BLOCK_WHEAT_2, BLOCK_WHEAT_3 };
+  const char* names[4] = { "screenshot_crop_stage0.bmp", "screenshot_crop_stage1.bmp",
+                           "screenshot_crop_stage2.bmp", "screenshot_crop_stage3_mature.bmp" };
+  for (int s = 0; s < 4; s++) {
+    remeshAll(g_world->setBlock(9, 44, 9, stages[s]));
+    if (s < 3) {
+      g_world->cropTimers[{ 9, 44, 9 }] = 37.0; // arbitrary nonzero, just to populate the readout
+    } else {
+      g_world->cropTimers.erase({ 9, 44, 9 }); // mature: no timer, matches real end-of-growth state
+    }
+    for (int frame = 0; frame < 5; frame++) pump();
+    render();
+    captureFrame((exeDir() + names[s]).c_str());
+    SwapBuffers(g_dc);
+  }
+
+  teardownSession();
+  g_state = GameState::Menu;
+  return 0;
 }
 
 // End-to-end water tool test through the real click handlers (tryMine =
@@ -4503,7 +4756,11 @@ static int runSelftest() {
           for (int lx = 0; lx < CHUNK_SIZE; lx++) {
             for (int y = 1; y < CHUNK_HEIGHT - 1; y++) {
               uint8_t here = ch->getLocal(lx, y, lz);
-              if (!isPlant(here) || here == BLOCK_TALL_GRASS) continue;
+              // Crops satisfy isPlant() too (see isPlant, blocks.cpp) but
+              // aren't flowers and root on farmland, not grass — counting
+              // them here would both miscategorize them and spuriously trip
+              // wrongHost once wild farm patches exist in worldgen.
+              if (!isPlant(here) || here == BLOCK_TALL_GRASS || isCrop(here)) continue;
               flowerCount++;
               if (ch->getLocal(lx, y - 1, lz) != BLOCK_GRASS) wrongHost++;
               for (int k = 0; k < FLOWER_KIND_COUNT; k++) {
@@ -4520,6 +4777,48 @@ static int runSelftest() {
     if (!(flowerCount > 20 && wrongHost == 0 && allKinds)) {
       std::fprintf(f, "  (flowers=%d wrongHost=%d kinds=%d,%d,%d,%d)\n", flowerCount, wrongHost,
                    kindSeen[0], kindSeen[1], kindSeen[2], kindSeen[3]);
+    }
+  }
+
+  // Wild farm patches (see isFarmSite, worldgen.cpp): the game's only source
+  // of a wheat/carrot/potato seed item, since crops are otherwise
+  // harvest-only with no crafting recipe. Every crop cell must root on
+  // farmland, several patches must exist within an ordinary exploring
+  // range, and all 3 kinds plus some already-mature cells must turn up —
+  // otherwise a fresh world could leave a player with no legitimate way to
+  // ever obtain one.
+  {
+    int farmlandCount = 0, cropCount = 0, matureCount = 0, wrongRoot = 0;
+    bool kindSeen[CROP_KIND_COUNT] = {};
+    for (int ccx = -10; ccx <= 10; ccx++) {
+      for (int ccz = -10; ccz <= 10; ccz++) {
+        auto ch = generateChunk(ccx, ccz);
+        for (int lz = 0; lz < CHUNK_SIZE; lz++) {
+          for (int lx = 0; lx < CHUNK_SIZE; lx++) {
+            for (int y = 1; y < CHUNK_HEIGHT - 1; y++) {
+              uint8_t here = ch->getLocal(lx, y, lz);
+              if (here == BLOCK_FARMLAND) farmlandCount++;
+              if (!isCrop(here)) continue;
+              cropCount++;
+              if (isMatureCrop(here)) matureCount++;
+              if (ch->getLocal(lx, y - 1, lz) != BLOCK_FARMLAND) wrongRoot++;
+              for (int k = 0; k < CROP_KIND_COUNT; k++) {
+                if (here >= CROP_BASE_BLOCKS[k] && here < CROP_BASE_BLOCKS[k] + CROP_STAGE_COUNT) {
+                  kindSeen[k] = true;
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+    bool allKinds = true;
+    for (int k = 0; k < CROP_KIND_COUNT; k++) allKinds = allKinds && kindSeen[k];
+    bool ok = farmlandCount > 40 && cropCount > 15 && matureCount > 5 && wrongRoot == 0 && allKinds;
+    check(ok, "wild_farm_patches_present_and_harvestable");
+    if (!ok) {
+      std::fprintf(f, "  (farmland=%d crops=%d mature=%d wrongRoot=%d kinds=%d,%d,%d)\n", farmlandCount,
+                   cropCount, matureCount, wrongRoot, kindSeen[0], kindSeen[1], kindSeen[2]);
     }
   }
 
@@ -5694,6 +5993,11 @@ static int runSelftest() {
   auto isSprite = [&](int tile) {
     return tile == TILE_TALL_GRASS ||
            (tile >= TILE_FLOWER_POPPY && tile <= TILE_FLOWER_CORNFLOWER) ||
+           // Crop billboards (isPlant, blocks.h) — same transparent-field
+           // silhouette as tall grass/flowers, not a full-cube face. Farmland
+           // itself (TILE_FARMLAND_TOP, just before this range) is a solid
+           // block and correctly stays out of this check.
+           (tile >= TILE_WHEAT_SPROUT && tile <= TILE_POTATO_MATURE) ||
            tile >= TILE_FIRST_ITEM;
   };
   int spriteClear[TILE_COUNT] = {}, spriteSolid[TILE_COUNT] = {};
@@ -5760,6 +6064,153 @@ static int runSelftest() {
     }
   }
 
+  // Crops: pure stage-helper logic first (blocks.h, no world needed), then
+  // the full till/plant/grow/harvest/mine flow through the real click
+  // handlers and updateCropGrowth, on a real session (updateCropGrowth
+  // remeshes via g_world internally, so it needs one).
+  {
+    bool helpersOk = true;
+    const uint8_t bases[3] = { BLOCK_WHEAT_0, BLOCK_CARROT_0, BLOCK_POTATO_0 };
+    const int items[3] = { ITEM_WHEAT, ITEM_CARROT, ITEM_POTATO };
+    for (int k = 0; k < 3; k++) {
+      for (int s = 0; s < 4; s++) {
+        uint8_t id = (uint8_t)(bases[k] + s);
+        if (!isCrop(id)) helpersOk = false;
+        if (cropStage(id) != s) helpersOk = false;
+        if (cropItemFor(id) != items[k]) helpersOk = false;
+        bool shouldBeMature = (s == 3);
+        if (isMatureCrop(id) != shouldBeMature) helpersOk = false;
+        uint8_t next = nextCropStage(id);
+        if (shouldBeMature ? (next != id) : (next != id + 1)) helpersOk = false;
+      }
+      if (cropBaseBlockForItem((uint8_t)items[k]) != bases[k]) helpersOk = false;
+    }
+    if (isCrop(BLOCK_DIRT) || isCrop(BLOCK_AIR)) helpersOk = false;
+    if (cropBaseBlockForItem(ITEM_APPLE) >= 0) helpersOk = false;
+    check(helpersOk, "crop_stage_helpers");
+  }
+  {
+    SaveState fixedSeed;
+    fixedSeed.seed = 1337;
+    createSession(&fixedSeed);
+    g_state = GameState::Playing;
+    g_world->updateLoadedChunks(9, 9); // load the area this test builds on
+
+    auto lookAt = [&](double tx, double ty, double tz) {
+      Vec3 eye = g_player->eyePosition();
+      double dx = tx - eye.x, dy = ty - eye.y, dz = tz - eye.z;
+      double horiz = std::sqrt(dx * dx + dz * dz);
+      g_player->pitch = std::atan2(dy, horiz);
+      g_player->yaw = std::atan2(-dx, -dz);
+    };
+    auto countHeld = [&](int itemId) {
+      int n = 0;
+      for (const Hotbar::Slot& s : g_hotbar->slots) if (s.blockId == itemId) n += s.count;
+      return n;
+    };
+
+    for (int bx = 8; bx <= 11; bx++) {
+      for (int bz = 8; bz <= 11; bz++) g_world->setBlock(bx, 43, bz, BLOCK_GRASS);
+    }
+    g_player->position = Vec3(9.5, 44.0, 8.5); // standing on the block at (9,43,8)
+    lookAt(9.5, 43.5, 9.5);                    // the grass block one cell ahead
+
+    g_inventory->mainHand = { ITEM_WOOD_HOE, 1 }; // equipped, not hotbar-selected
+    tryMine();
+    check(g_world->getBlock(9, 43, 9) == BLOCK_FARMLAND, "till_soil");
+
+    g_hotbar->slots[1] = { ITEM_WHEAT, 3 };
+    g_hotbar->select(1);
+    lookAt(9.5, 43.5, 9.5); // still the same cell, now farmland
+
+    // Right-click no longer plants: planting moved to E (matching harvest,
+    // which is also E, not left-click), so aiming at farmland and
+    // right-clicking a crop item now just eats it, same as any other food.
+    g_player->hunger = 10; // not full, or tryEatSelected would refuse and this wouldn't prove anything
+    int wheatBeforeEat = countHeld(ITEM_WHEAT);
+    tryPlace();
+    bool rightClickEatsNotPlants = g_world->getBlock(9, 44, 9) == BLOCK_AIR &&
+                                   countHeld(ITEM_WHEAT) == wheatBeforeEat - 1;
+    check(rightClickEatsNotPlants, "right_click_eats_crop_not_plants");
+
+    g_hotbar->slots[1] = { ITEM_WHEAT, 2 };
+    g_hotbar->select(1);
+    int wheatBefore = countHeld(ITEM_WHEAT);
+    tryPlantCrop(); // the E-key path (WM_KEYDOWN's BLOCK_FARMLAND branch calls this directly)
+    bool plantOk = g_world->getBlock(9, 44, 9) == BLOCK_WHEAT_0 &&
+                   countHeld(ITEM_WHEAT) == wheatBefore - 1 && g_world->cropTimers.count({ 9, 44, 9 }) == 1;
+    check(plantOk, "plant_crop");
+
+    // Drive the same crop through updateCropGrowth with its timer forced
+    // low before each tick (real growth takes 40-80s, too slow to wait out
+    // here), confirming it advances exactly one stage per expiry and clears
+    // the timer once mature.
+    bool growthOk = true;
+    for (int expectedStage = 1; expectedStage <= 3; expectedStage++) {
+      g_world->cropTimers[{ 9, 44, 9 }] = 0.5;
+      updateCropGrowth(1.0);
+      if (cropStage(g_world->getBlock(9, 44, 9)) != expectedStage) growthOk = false;
+    }
+    if (g_world->cropTimers.count({ 9, 44, 9 }) != 0) growthOk = false; // mature: nothing left to time
+    check(growthOk && g_world->getBlock(9, 44, 9) == BLOCK_WHEAT_3, "crop_growth_ticks_through_stages");
+
+    // Now mature, mine it and confirm the item comes back and the cell
+    // clears to air (farmland exposed underneath).
+    lookAt(9.5, 44.5, 9.5);
+    int wheatBeforeMine = countHeld(ITEM_WHEAT);
+    tryMine();
+    bool matureMineOk = g_world->getBlock(9, 44, 9) == BLOCK_AIR &&
+                        countHeld(ITEM_WHEAT) == wheatBeforeMine + 1 &&
+                        g_world->cropTimers.count({ 9, 44, 9 }) == 0;
+    check(matureMineOk, "mine_mature_crop_drops_item");
+
+    // Same cell, immature this time: clears, but grants nothing.
+    g_world->setBlock(9, 44, 9, BLOCK_CARROT_0);
+    lookAt(9.5, 44.5, 9.5);
+    int carrotBeforeMine = countHeld(ITEM_CARROT);
+    tryMine();
+    bool immatureMineOk = g_world->getBlock(9, 44, 9) == BLOCK_AIR && countHeld(ITEM_CARROT) == carrotBeforeMine;
+    check(immatureMineOk, "mine_immature_crop_drops_nothing");
+
+    // E-harvest: the standalone path (main.cpp's harvestCrop) the E-key
+    // dispatch actually calls, not tryMine.
+    g_world->setBlock(9, 44, 9, BLOCK_POTATO_3);
+    g_world->cropTimers[{ 9, 44, 9 }] = 5.0;
+    int potatoBefore = countHeld(ITEM_POTATO);
+    harvestCrop(9, 44, 9, BLOCK_POTATO_3);
+    bool harvestOk = g_world->getBlock(9, 44, 9) == BLOCK_AIR && countHeld(ITEM_POTATO) == potatoBefore + 1 &&
+                     g_world->cropTimers.count({ 9, 44, 9 }) == 0;
+    check(harvestOk, "harvest_mature_crop");
+
+    teardownSession();
+    g_state = GameState::Menu;
+  }
+
+  // Day/night: dayNightState()'s color/darkness ramp at a few reference
+  // points, and a save/load round-trip for g_timeOfDay.
+  {
+    double r, g, b, dark;
+    dayNightState(0.5, r, g, b, dark); // noon: full day color, no darkening
+    bool noonOk = dark < 0.05 && std::fabs(r - SKY_R) < 0.01 && std::fabs(g - SKY_G) < 0.01 &&
+                  std::fabs(b - SKY_B) < 0.01;
+    dayNightState(0.0, r, g, b, dark); // midnight: dark and noticeably tinted
+    bool midnightOk = dark > 0.7 && r < 0.1 && g < 0.1 && b < 0.2;
+    double r2, g2, b2, dark2;
+    dayNightState(1.02, r, g, b, dark);   // wraps cleanly past 1.0...
+    dayNightState(0.02, r2, g2, b2, dark2); // ...to read the same as just past 0.0
+    bool wrapOk = std::fabs(dark - dark2) < 0.01;
+    check(noonOk && midnightOk && wrapOk, "day_night_color_cycle");
+  }
+  {
+    SaveState s;
+    s.timeOfDay = 0.6789;
+    saveGame(s, "selftest_timeofday");
+    SaveState loaded;
+    bool loadedOk = loadGame(loaded, "selftest_timeofday") && std::fabs(loaded.timeOfDay - 0.6789) < 1e-6;
+    check(loadedOk, "time_of_day_save_roundtrip");
+    DeleteFileA((exeDir() + "saves\\selftest_timeofday.txt").c_str());
+  }
+
   std::fprintf(f, "%s\n", failures == 0 ? "ALL_PASS" : "HAS_FAILURES");
   std::fclose(f);
   return failures == 0 ? 0 : 1;
@@ -5770,6 +6221,7 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR lpCmdLine, int) {
   bool screenshotMode = std::strstr(lpCmdLine, "--screenshot") != nullptr;
   bool selftestMode = std::strstr(lpCmdLine, "--selftest") != nullptr;
   bool waterTestMode = std::strstr(lpCmdLine, "--watertest") != nullptr;
+  bool cropTestMode = std::strstr(lpCmdLine, "--croptest") != nullptr;
   const char* mapDumpArg = std::strstr(lpCmdLine, "--mapdump");
   if (mapDumpArg) {
     uint32_t seed = 1337;
@@ -5832,10 +6284,12 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR lpCmdLine, int) {
   }
   g_menu.showPanel(MenuPanel::Main);
 
-  if (screenshotMode || waterTestMode) {
+  if (screenshotMode || waterTestMode || cropTestMode) {
     int code;
     if (waterTestMode) {
       code = runWaterTest();
+    } else if (cropTestMode) {
+      code = runCropTestMode();
     } else {
       std::string out = exeDir() + "screenshot.bmp";
       code = runScreenshotMode(out.c_str());

@@ -18,8 +18,10 @@ static RayCell classifySolid(uint8_t id) {
   // still have to be aim-able, or one could be placed and never mined back.
   // A flower is the same shape of exception: walk-through, but a real
   // collectible (see isFlower, tryMine in main.cpp) that has to be aimable
-  // too, or it could never actually be picked despite being minable.
-  return (isSolid(id) || isPanel(id) || isFlower(id)) ? RAY_HIT : RAY_PASS;
+  // too, or it could never actually be picked despite being minable. A crop
+  // is the same story again (see isCrop, tryMine's crop branch and the E-key
+  // harvest dispatch in main.cpp).
+  return (isSolid(id) || isPanel(id) || isFlower(id) || isCrop(id)) ? RAY_HIT : RAY_PASS;
 }
 
 static bool raycastClassify(World& world, const Vec3& origin, const Vec3& direction,

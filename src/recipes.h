@@ -109,6 +109,16 @@ enum CraftItem : uint8_t {
   // convention as ITEM_SWORD/ITEM_POWER_AXE. Pokes rather than slashes, and
   // out-reaches every other weapon — see attackReach in tools.cpp.
   ITEM_SPEAR,
+  // --- crops ---------------------------------------------------------------
+  // Not CRAFT_RECIPES entries, same as the fruits above: harvested from a
+  // mature crop (blocks.h's isMatureCrop) or dropped by mining an immature
+  // one, never the crafting grid — see main.cpp's crop harvest/mine
+  // handling. Each also plants itself back onto farmland (the harvested
+  // item doubles as its own seed, same as a real carrot/potato), and eats
+  // raw like a fruit (isEatableFood, no cooking gate).
+  ITEM_WHEAT,
+  ITEM_CARROT,
+  ITEM_POTATO,
   CRAFT_ITEM_COUNT,
 };
 
