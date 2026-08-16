@@ -83,6 +83,42 @@ enum CraftItem : uint8_t {
   // at full hunger.
   ITEM_HEALTH_POTION_SMALL, // 3 poppies, +2 hearts
   ITEM_HEALTH_POTION_BIG,   // 6 poppies, +4 hearts
+  // --- fish --------------------------------------------------------------
+  // Not CRAFT_RECIPES entries, same as the meats and fruit above: dropped
+  // when a fish (fish.h) is killed, see fishItemFor. Each raw species gets
+  // its own item/icon (item_art.cpp); all of them cook into the single
+  // ITEM_COOKED_FISH below (the R-key cook action, same as raw meat), and
+  // eating any of them RAW — like raw meat — costs health instead of
+  // restoring hunger (isUnsafeRawFood): cooking first is how you actually
+  // want to eat what you catch.
+  ITEM_RAW_COD,
+  ITEM_RAW_SALMON,
+  ITEM_RAW_PUFFERFISH,
+  ITEM_RAW_TROPICAL_FISH,
+  ITEM_RAW_SHARK, // dropped by the shark (fish.h) — rare, open-water only
+  ITEM_COOKED_FISH,
+  // --- weapons -------------------------------------------------------------
+  // A heavier upgrade forged from stone axes rather than raw material — see
+  // CRAFT_RECIPES (3 stone axes, shapeless). Its own hand-drawn icon
+  // (art\power_axe.png), same convention as ITEM_SWORD/art\sword.png, but
+  // held/equipped with the ordinary axe geometry (tools.cpp).
+  ITEM_POWER_AXE,
+  // A stone tip on a two-stick shaft (see CRAFT_RECIPES — diagonal, so it
+  // doesn't collide with the stone shovel's identical 1 stone + 2 sticks in
+  // a straight column). Its own hand-drawn icon (art\spear.png), same
+  // convention as ITEM_SWORD/ITEM_POWER_AXE. Pokes rather than slashes, and
+  // out-reaches every other weapon — see attackReach in tools.cpp.
+  ITEM_SPEAR,
+  // --- crops ---------------------------------------------------------------
+  // Not CRAFT_RECIPES entries, same as the fruits above: harvested from a
+  // mature crop (blocks.h's isMatureCrop) or dropped by mining an immature
+  // one, never the crafting grid — see main.cpp's crop harvest/mine
+  // handling. Each also plants itself back onto farmland (the harvested
+  // item doubles as its own seed, same as a real carrot/potato), and eats
+  // raw like a fruit (isEatableFood, no cooking gate).
+  ITEM_WHEAT,
+  ITEM_CARROT,
+  ITEM_POTATO,
   CRAFT_ITEM_COUNT,
 };
 
@@ -127,10 +163,22 @@ const Recipe* findRecipeByCount(const uint8_t items[9], const int counts[9],
 const char* craftItemName(uint8_t id);
 
 // True for any item that restores hunger just by eating it directly — cooked
-// meat and every fruit — the one gate shared by all three eat gestures
-// (right-click-selected, double-click, drag-to-preview) in main.cpp and
-// inventory.cpp, so a new food only needs adding here to work everywhere.
+// meat, cooked fish and every fruit — the one gate shared by all three eat
+// gestures (right-click-selected, double-click, drag-to-preview) in main.cpp
+// and inventory.cpp, so a new food only needs adding here to work everywhere.
 bool isEatableFood(uint8_t id);
+
+// True for raw meat and every raw fish species: edible, but eating one
+// straight (right-click-selected — see main.cpp's tryEatRawUnsafe) costs
+// health instead of restoring hunger, same "cook it first" incentive real
+// food safety gives raw meat/fish.
+bool isUnsafeRawFood(uint8_t id);
+
+// The cooked item raw meat/fish becomes at a heat source (main.cpp's R-key
+// cook action), or -1 if `id` isn't cookable. Every raw fish species cooks
+// into the one ITEM_COOKED_FISH, the same way every animal's raw meat
+// already cooks into the one ITEM_COOKED_MEAT.
+int cookedItemFor(uint8_t rawId);
 
 // Health points (out of the 20-point scale, 2 per heart — see Player in
 // player.h) a health potion restores when drunk, or 0 if `id` isn't one.

@@ -802,10 +802,19 @@ void remeshChunk(World& world, Chunk& chunk) {
         }
 
         if (isPlant(id)) {
-          // Height and width vary per position: some tufts are ankle-high,
-          // others reach past a block.
-          double h = 0.45 + plantHash(wx, wz, 0x9E37u) * 1.05;
-          double w = 0.80 + plantHash(wx, wz, 0x85EBu) * 0.35;
+          double h, w;
+          int stage = cropStage(id);
+          if (stage >= 0) {
+            // Crops grow visibly taller each stage instead of varying
+            // randomly per position — the height IS the growth readout.
+            h = 0.22 + stage * 0.22;
+            w = 0.6;
+          } else {
+            // Height and width vary per position: some tufts are ankle-high,
+            // others reach past a block.
+            h = 0.45 + plantHash(wx, wz, 0x9E37u) * 1.05;
+            w = 0.80 + plantHash(wx, wz, 0x85EBu) * 0.35;
+          }
           plants.addPlant(x, y, z, id, h, w);
           continue;
         }

@@ -73,16 +73,17 @@ const QuadrupedShape QUADRUPED_SHAPES[ANIMAL_SPECIES_COUNT] = {
 // rabbit(5) < chicken(4) < cat/ocelot(3) < sheep/pig(2.5) < wolf(2) <
 // cow(1.5) < panda(1) < polar bear(0.7) — see the maxHealth comment above.
 const AnimalSpeciesDef ANIMAL_SPECIES[ANIMAL_SPECIES_COUNT] = {
-  /* PIG        */ { "pig",         8, 2.5, { true,  false, false, false }, 0.28, 0.55 },
-  /* COW        */ { "cow",        14, 1.5, { true,  false, false, false }, 0.32, 0.85 },
-  /* CHICKEN    */ { "chicken",     4, 4.0, { true,  false, false, false }, 0.18, 0.55 },
-  /* SHEEP      */ { "sheep",       8, 2.5, { true,  false, false, false }, 0.30, 0.75 },
-  /* WOLF       */ { "wolf",       10, 2.0, { true,  false, true,  true  }, 0.24, 0.65 },
-  /* RABBIT     */ { "rabbit",      3, 5.0, { true,  true,  false, true  }, 0.16, 0.32 },
-  /* OCELOT     */ { "ocelot",      6, 3.0, { true,  false, false, false }, 0.22, 0.50 },
-  /* CAT        */ { "cat",         6, 3.0, { true,  false, false, false }, 0.20, 0.45 },
-  /* PANDA      */ { "panda",      20, 1.0, { true,  false, false, false }, 0.32, 0.70 },
-  /* POLAR_BEAR */ { "polar bear", 30, 0.7, { false, false, false, true  }, 0.38, 1.05 },
+  //                                                                                          halfW height predator
+  /* PIG        */ { "pig",         8, 2.5, { true,  false, false, false }, 0.28, 0.55, false },
+  /* COW        */ { "cow",        14, 1.5, { true,  false, false, false }, 0.32, 0.85, false },
+  /* CHICKEN    */ { "chicken",     4, 4.0, { true,  false, false, false }, 0.18, 0.55, false },
+  /* SHEEP      */ { "sheep",       8, 2.5, { true,  false, false, false }, 0.30, 0.75, false },
+  /* WOLF       */ { "wolf",       10, 2.0, { true,  false, true,  true  }, 0.24, 0.65, true  },
+  /* RABBIT     */ { "rabbit",      3, 5.0, { true,  true,  false, true  }, 0.16, 0.32, false },
+  /* OCELOT     */ { "ocelot",      6, 3.0, { true,  false, false, false }, 0.22, 0.50, false },
+  /* CAT        */ { "cat",         6, 3.0, { true,  false, false, false }, 0.20, 0.45, false },
+  /* PANDA      */ { "panda",      20, 1.0, { true,  false, false, false }, 0.32, 0.70, false },
+  /* POLAR_BEAR */ { "polar bear", 30, 0.7, { false, false, false, true  }, 0.38, 1.05, true  },
 };
 
 int meatDropFor(AnimalSpecies species) {
@@ -104,6 +105,15 @@ int meatDropFor(AnimalSpecies species) {
     default:
       return 1;
   }
+}
+
+double attackPowerFor(AnimalSpecies species) {
+  const AnimalSpeciesDef& def = ANIMAL_SPECIES[species];
+  if (!def.predator) return 0;
+  // Scaled off height, snapped to the same 0.5 steps tools.h's attackPower
+  // uses: wolf (0.65) lands right around a wooden sword, polar bear (1.05)
+  // around a stone one.
+  return std::round(def.height * 1.5 * 2) / 2.0;
 }
 
 namespace {
@@ -357,7 +367,7 @@ Mulberry32 g_animalRng(0x4E1A7B2u);
 
 } // namespace
 
-void updateAnimal(Animal& a, World& world, double dt) {
+void updateAnimal(Animal& a, World& world, double dt, const Vec3& playerPos) {
   // A dying animal just lies where it fell — main.cpp counts its
   // deathTimer down and removes it once the lie-down is over; no AI, no
   // physics, so it doesn't slide or wander mid-death-animation.
@@ -365,6 +375,8 @@ void updateAnimal(Animal& a, World& world, double dt) {
 
   const AnimalSpeciesDef& def = ANIMAL_SPECIES[a.species];
   const double WALK_SPEED = 1.3;
+  const double PROVOKED_SPEED_MULT = 1.8; // fleeing/chasing is urgent, not a stroll
+  const double LUNGE_SPEED_MULT = 3.2;    // the charge itself, well past the chase speed
   const double GRAVITY = 28;
   // v^2/2g = 1.29 blocks of rise — clears a single ledge with real margin
   // (the old 7.5 worked out to 1.004, a knife's edge the discrete timestep
@@ -374,15 +386,38 @@ void updateAnimal(Animal& a, World& world, double dt) {
   const double TERMINAL_FALL_SPEED = -50;
   const double TURN_SPEED = 2.5; // radians/sec
 
-  a.wanderTimer -= dt;
-  if (a.wanderTimer <= 0) {
-    if (g_animalRng.next() < 0.35) {
-      a.moving = false;
-      a.wanderTimer = 1.0 + g_animalRng.next() * 2.0;
-    } else {
-      a.moving = true;
-      a.targetYaw = g_animalRng.next() * 2 * PI;
-      a.wanderTimer = 2.0 + g_animalRng.next() * 3.0;
+  if (a.provoked) {
+    a.provokedTimer -= dt;
+    if (a.provokedTimer <= 0) a.provoked = false;
+  }
+  if (a.attackLungeTimer > 0) a.attackLungeTimer = std::max(0.0, a.attackLungeTimer - dt);
+
+  if (a.provoked) {
+    // main.cpp sets this the instant the player lands a hit; from here it's
+    // just "which way is the player" — prey points its yaw away, a predator
+    // points it straight at them (main.cpp resolves the actual bite once
+    // close enough, gated by attackCooldown).
+    double dx = def.predator ? playerPos.x - a.position.x : a.position.x - playerPos.x;
+    double dz = def.predator ? playerPos.z - a.position.z : a.position.z - playerPos.z;
+    if (std::fabs(dx) > 1e-6 || std::fabs(dz) > 1e-6) a.targetYaw = std::atan2(-dx, -dz);
+    // A chasing predator stops advancing once basically adjacent instead of
+    // continuing to push into the player — UNLESS attackLungeTimer is
+    // running, which forces it to keep moving right through that standstill
+    // so the bite itself reads as a charge, not a stationary nip.
+    double distSq = dx * dx + dz * dz;
+    a.moving = !def.predator || distSq > 1.0 || a.attackLungeTimer > 0;
+    a.wanderTimer = 0.3; // keep re-aiming at the player every tick rather than drifting off target
+  } else {
+    a.wanderTimer -= dt;
+    if (a.wanderTimer <= 0) {
+      if (g_animalRng.next() < 0.35) {
+        a.moving = false;
+        a.wanderTimer = 1.0 + g_animalRng.next() * 2.0;
+      } else {
+        a.moving = true;
+        a.targetYaw = g_animalRng.next() * 2 * PI;
+        a.wanderTimer = 2.0 + g_animalRng.next() * 3.0;
+      }
     }
   }
 
@@ -392,7 +427,8 @@ void updateAnimal(Animal& a, World& world, double dt) {
     a.yaw += step;
   }
 
-  double speed = a.moving ? WALK_SPEED : 0.0;
+  double speedMult = a.attackLungeTimer > 0 ? LUNGE_SPEED_MULT : (a.provoked ? PROVOKED_SPEED_MULT : 1.0);
+  double speed = a.moving ? WALK_SPEED * speedMult : 0.0;
   a.velocity.x = -std::sin(a.yaw) * speed;
   a.velocity.z = -std::cos(a.yaw) * speed;
   a.velocity.y = std::max(a.velocity.y - GRAVITY * dt, TERMINAL_FALL_SPEED);

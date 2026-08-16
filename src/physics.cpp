@@ -126,6 +126,24 @@ bool boxCollidesLadder(World& world, double x, double y, double z, double halfWi
   return false;
 }
 
+bool touchingWater(World& world, double x, double y, double z, double halfWidth, double height) {
+  int minX = (int)std::floor(x - halfWidth);
+  int maxX = (int)std::floor(x + halfWidth);
+  int minY = (int)std::floor(y);
+  int maxY = (int)std::floor(y + height - 1e-4);
+  int minZ = (int)std::floor(z - halfWidth);
+  int maxZ = (int)std::floor(z + halfWidth);
+
+  for (int by = minY; by <= maxY; by++) {
+    for (int bz = minZ; bz <= maxZ; bz++) {
+      for (int bx = minX; bx <= maxX; bx++) {
+        if (isWater(world.getBlock(bx, by, bz))) return true;
+      }
+    }
+  }
+  return false;
+}
+
 bool boxCollidesSlab(World& world, double x, double y, double z, double halfWidth, double height) {
   int minX = (int)std::floor(x - halfWidth);
   int maxX = (int)std::floor(x + halfWidth);

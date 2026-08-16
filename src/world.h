@@ -81,6 +81,17 @@ public:
   // door's open state either, only position/facing-type data.
   std::unordered_map<EditKey, TrapdoorState, EditKeyHash> trapdoors;
 
+  // Seconds until the crop at this cell rolls its next growth stage —
+  // main.cpp's updateCropGrowth decrements these and advances the block on
+  // expiry. Registered when a crop is planted (main.cpp's tryPlantCrop) and
+  // re-registered in applyEdits() below whenever a chunk holding a
+  // non-mature crop edit is (re)built — chunks stream in/out continuously
+  // as the player wanders, not just once per session, so this is what lets
+  // growth resume with a fresh timer instead of permanently stalling once a
+  // chunk unloads. Not persisted to saves — only the pacing is ephemeral,
+  // the growth stage itself is just a block id, already covered by `edits`.
+  std::unordered_map<EditKey, double, EditKeyHash> cropTimers;
+
   static uint64_t chunkKey(int cx, int cz) {
     return ((uint64_t)(uint32_t)cx << 32) | (uint64_t)(uint32_t)cz;
   }

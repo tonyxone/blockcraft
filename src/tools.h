@@ -29,6 +29,26 @@ struct ToolVisual {
 const ToolVisual* toolVisualFor(uint8_t id);
 bool isToolItem(uint8_t id);
 
+// True for a tool/weapon held as its own hand-drawn art (art\README.md —
+// currently the sword, the power axe and the spear) rather than the generic
+// per-ToolShape box geometry. These are a thin extruded slab, not a
+// silhouette built wide on the axis the camera sees, so both
+// drawGrippedTool and drawFirstPersonArm give them the same extra grip
+// yaw/lean/tip a plain ToolShape-keyed check would miss for anything
+// that isn't literally shaped like a sword.
+bool isSpriteTool(uint8_t id);
+
+// True for a weapon that THRUSTS instead of slashing (the spear): the swing
+// animation becomes a straight jab along the shaft — see drawGrippedTool
+// and the arm poses in playermodel.cpp.
+bool toolPokes(uint8_t item);
+
+// How far a swing with this item reaches against animals and fish (used by
+// main.cpp's tryMine combat raycasts). Every weapon reaches as far as
+// MINE_REACH (2.0) except the spear at 4.0 — reach, not damage, is what a
+// spear is for.
+double attackReach(uint8_t item);
+
 // How much damage a swing with this item does against an animal. The
 // caller (main.cpp's tryMine) passes whatever's gripped in the mainHand
 // slot when something equippable (toolVisualFor/isToolItem above) is
@@ -39,6 +59,19 @@ bool isToolItem(uint8_t id);
 // bare stick at 0.5, below even the bare-hand floor — it is equippable but
 // not meant as a real weapon.
 double attackPower(uint8_t selectedItemId);
+
+// Relative heft of a gripped item, 1.0 being an ordinary one-handed grip —
+// what main.cpp scales the arm-swing animation's duration by, so a heavy
+// tool visibly winds up and comes down slower than a light one instead of
+// every item swinging at the same identical speed. Two rules, same as real
+// tools: within one shape, the stone-headed tier outweighs the wood one
+// (stone is denser than the wood haft both tiers share), and a
+// shape with a bigger/thicker head (pickaxe, axe) outweighs a shape with a
+// slighter one (hoe, sword) even at the same tier. The named upgrades (The
+// First Sword, the Power Axe) outweigh the ordinary stone tool they were
+// forged from — more raw material went into them. A bare hand, and the
+// bare stick, are lighter than any headed tool.
+double toolWeight(uint8_t item);
 
 // Shape of a tool swing over `swingT` (0..1): -1 is fully wound up with the
 // tool raised back, +1 is driving down through the strike, 0 is rest.

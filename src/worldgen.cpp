@@ -316,6 +316,26 @@ static bool isTreeSite(int wx, int wz, int cell, int jitter, int base, double fi
   return hash2D(cx * 7 + 5, cz * 11 + 9) < fill; // leave some cells empty
 }
 
+// Wild farm patches: crops are otherwise harvest-only with no crafting
+// recipe (see blocks.h's isCrop helpers), so without a natural find a player
+// could never obtain their first wheat/carrot/potato seed item at all. A
+// small already-tilled clearing, found rather than grown, fixes that — same
+// jittered-grid site technique as isTreeSite above, just a much larger cell
+// so patches are spaced apart across the map (worth exploring for) instead
+// of blanketing every field the way flowers do.
+static const int FARM_CELL = 48, FARM_JITTER = 24, FARM_BASE = 8;
+static const double FARM_FILL = 0.6;
+const int FARM_PATCH_SIZE = 4; // 4x4 farmland cells
+
+static bool isFarmSite(int wx, int wz) {
+  int cx = floorDiv(wx, FARM_CELL);
+  int cz = floorDiv(wz, FARM_CELL);
+  int ox = FARM_BASE + (int)(hash2D(cx * 2 + 17, cz * 2 + 23) * FARM_JITTER);
+  int oz = FARM_BASE + (int)(hash2D(cx * 2 + 29, cz * 2 + 31) * FARM_JITTER);
+  if (wx - cx * FARM_CELL != ox || wz - cz * FARM_CELL != oz) return false;
+  return hash2D(cx * 5 + 3, cz * 9 + 7) < FARM_FILL;
+}
+
 // Rolled from the column hash so a tree's size is stable per position.
 static int treeHeightFor(int wx, int wz, int surfaceY) {
   double roll = hash2D(wx * 7 + 13, wz * 13 + 7);
@@ -655,6 +675,52 @@ std::unique_ptr<Chunk> generateChunk(int cx, int cz) {
         int kind = (int)(hash2D(wx * 13 + 61, wz * 17 + 67) * FLOWER_KIND_COUNT);
         kind = std::min(kind, FLOWER_KIND_COUNT - 1);
         chunk->setLocal(lx, y + 1, lz, FLOWER_BLOCKS[kind]);
+      }
+    }
+  }
+
+  // Wild farm patches (see isFarmSite): a FARM_PATCH_SIZE^2 clearing of
+  // farmland with crops planted at mixed random growth stages — several
+  // land mature just from the count (up to 16 cells, 1-in-4 chance each),
+  // enough to reliably walk away with a seed item. Skipped entirely (like an
+  // oversized tree canopy) if the footprint would cross this chunk's edge,
+  // or if the anchor cell itself isn't grass — but plains terrain still
+  // undulates a little even where it reads as "flat", so each of the 16
+  // cells is placed at ITS OWN natural height rather than forcing the whole
+  // patch level: requiring exact uniform height rejected nearly every site
+  // in practice (real terrain noise, not a corner case) and left the map
+  // with none at all. A slightly stepped patch still reads fine as a found
+  // clearing; a cell that isn't grass (a stray tree, a dip into sand/water)
+  // just stays untouched rather than aborting the whole patch. Not
+  // registered in World::cropTimers (that only exists for player-driven
+  // planting via tryPlantCrop) — a found immature stalk is a static
+  // discovery, not a ticking plant, until a player mines and replants it.
+  for (int lz = 0; lz < CHUNK_SIZE; lz++) {
+    for (int lx = 0; lx < CHUNK_SIZE; lx++) {
+      int wx = cx * CHUNK_SIZE + lx;
+      int wz = cz * CHUNK_SIZE + lz;
+      if (!isFarmSite(wx, wz)) continue;
+      if (lx + FARM_PATCH_SIZE - 1 >= CHUNK_SIZE || lz + FARM_PATCH_SIZE - 1 >= CHUNK_SIZE) continue;
+      const ColumnInfo& anchor = infos[lz * CHUNK_SIZE + lx];
+      if (anchor.surfaceY <= SEA_LEVEL + 1 || anchor.biome != BIOME_PLAINS ||
+          chunk->getLocal(lx, anchor.surfaceY, lz) != BLOCK_GRASS) {
+        continue;
+      }
+      for (int dz = 0; dz < FARM_PATCH_SIZE; dz++) {
+        for (int dx = 0; dx < FARM_PATCH_SIZE; dx++) {
+          const ColumnInfo& cell = infos[(lz + dz) * CHUNK_SIZE + (lx + dx)];
+          int y = cell.surfaceY;
+          if (y <= SEA_LEVEL + 1 || y + 1 >= CHUNK_HEIGHT || cell.biome != BIOME_PLAINS ||
+              chunk->getLocal(lx + dx, y, lz + dz) != BLOCK_GRASS ||
+              chunk->getLocal(lx + dx, y + 1, lz + dz) != BLOCK_AIR) {
+            continue;
+          }
+          int fx = wx + dx, fz = wz + dz;
+          chunk->setLocal(lx + dx, y, lz + dz, BLOCK_FARMLAND);
+          int kind = std::min((int)(hash2D(fx * 13 + 71, fz * 17 + 79) * CROP_KIND_COUNT), CROP_KIND_COUNT - 1);
+          int stage = std::min((int)(hash2D(fx * 19 + 83, fz * 23 + 89) * CROP_STAGE_COUNT), CROP_STAGE_COUNT - 1);
+          chunk->setLocal(lx + dx, y + 1, lz + dz, (uint8_t)(CROP_BASE_BLOCKS[kind] + stage));
+        }
       }
     }
   }

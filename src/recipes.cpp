@@ -129,6 +129,18 @@ const Recipe CRAFT_RECIPES[] = {
   { "The First Sword", ITEM_SWORD, 1, false,
     { "C..", "C..", "CS." }, { { 'C', BLOCK_STONE }, { 'S', ITEM_STICK } } },
 
+  // Forged from 3 stone axes rather than raw material — shapeless, like the
+  // potions below, since it's "3 of these anywhere" not a grid shape.
+  { "Power Axe", ITEM_POWER_AXE, 1, true,
+    { "AAA", "...", "..." }, { { 'A', ITEM_STONE_AXE } } },
+
+  // A stone tip on a two-stick shaft. DIAGONAL on purpose: 1 stone + 2
+  // sticks in a straight column is already the stone shovel, so the spear
+  // takes the one layout still free. Its reach, not its power, is the
+  // selling point — see attackReach in tools.cpp.
+  { "Spear", ITEM_SPEAR, 1, false,
+    { "C..", ".S.", "..S" }, { { 'C', BLOCK_STONE }, { 'S', ITEM_STICK } } },
+
   // --- potions -----------------------------------------------------------
   // Shapeless: any 3 (or 6) poppies anywhere in the grid, no crafting table
   // step beyond the grid itself needed.
@@ -344,6 +356,17 @@ const char* craftItemName(uint8_t id) {
     case ITEM_ORANGE: return "orange";
     case ITEM_HEALTH_POTION_SMALL: return "small health potion";
     case ITEM_HEALTH_POTION_BIG: return "big health potion";
+    case ITEM_RAW_COD: return "raw cod";
+    case ITEM_RAW_SALMON: return "raw salmon";
+    case ITEM_RAW_PUFFERFISH: return "raw pufferfish";
+    case ITEM_RAW_TROPICAL_FISH: return "raw tropical fish";
+    case ITEM_RAW_SHARK: return "raw shark";
+    case ITEM_COOKED_FISH: return "cooked fish";
+    case ITEM_POWER_AXE: return "power axe";
+    case ITEM_SPEAR: return "spear";
+    case ITEM_WHEAT: return "wheat";
+    case ITEM_CARROT: return "carrot";
+    case ITEM_POTATO: return "potato";
     default: return "?";
   }
 }
@@ -351,14 +374,46 @@ const char* craftItemName(uint8_t id) {
 bool isEatableFood(uint8_t id) {
   switch (id) {
     case ITEM_COOKED_MEAT:
+    case ITEM_COOKED_FISH:
     case ITEM_APPLE:
     case ITEM_PEACH:
     case ITEM_PEAR:
     case ITEM_CHERRY:
     case ITEM_ORANGE:
+    case ITEM_WHEAT:
+    case ITEM_CARROT:
+    case ITEM_POTATO:
       return true;
     default:
       return false;
+  }
+}
+
+bool isUnsafeRawFood(uint8_t id) {
+  switch (id) {
+    case ITEM_RAW_MEAT:
+    case ITEM_RAW_COD:
+    case ITEM_RAW_SALMON:
+    case ITEM_RAW_PUFFERFISH:
+    case ITEM_RAW_TROPICAL_FISH:
+    case ITEM_RAW_SHARK:
+      return true;
+    default:
+      return false;
+  }
+}
+
+int cookedItemFor(uint8_t rawId) {
+  switch (rawId) {
+    case ITEM_RAW_MEAT: return ITEM_COOKED_MEAT;
+    case ITEM_RAW_COD:
+    case ITEM_RAW_SALMON:
+    case ITEM_RAW_PUFFERFISH:
+    case ITEM_RAW_TROPICAL_FISH:
+    case ITEM_RAW_SHARK:
+      return ITEM_COOKED_FISH;
+    default:
+      return -1;
   }
 }
 
@@ -414,6 +469,17 @@ int craftItemTile(uint8_t id) {
     case ITEM_ORANGE: return TILE_ORANGE;
     case ITEM_HEALTH_POTION_SMALL: return TILE_POTION_SMALL;
     case ITEM_HEALTH_POTION_BIG: return TILE_POTION_BIG;
+    case ITEM_RAW_COD: return TILE_RAW_COD;
+    case ITEM_RAW_SALMON: return TILE_RAW_SALMON;
+    case ITEM_RAW_PUFFERFISH: return TILE_RAW_PUFFERFISH;
+    case ITEM_RAW_TROPICAL_FISH: return TILE_RAW_TROPICAL_FISH;
+    case ITEM_RAW_SHARK: return TILE_RAW_SHARK;
+    case ITEM_COOKED_FISH: return TILE_COOKED_FISH;
+    case ITEM_POWER_AXE: return TILE_POWER_AXE;
+    case ITEM_SPEAR: return TILE_SPEAR;
+    case ITEM_WHEAT: return TILE_WHEAT;
+    case ITEM_CARROT: return TILE_CARROT;
+    case ITEM_POTATO: return TILE_POTATO;
     default: return TILE_NONE;
   }
 }

@@ -32,7 +32,20 @@ enum Block : uint8_t {
   BLOCK_LEAVES_PEAR = 20,
   BLOCK_LEAVES_CHERRY = 21,
   BLOCK_LEAVES_ORANGE = 22,
-  BLOCK_TYPE_COUNT = 23,
+  // Tilled soil (hoe on grass/dirt — see main.cpp's tryTillSoil) — a plain
+  // solid cube, only its top face is distinct (reuses TILE_DIRT for bottom
+  // and side, same one-distinct-face convention grass already uses).
+  BLOCK_FARMLAND = 23,
+  // Crops: one block id per (kind, growth stage), same "variant is its own
+  // id" idiom BLOCK_LEAVES_APPLE.. already uses for fruiting leaves — not
+  // solid, drawn as a cross-billboard like tall grass/flowers (isPlant).
+  // Stage order within a kind must stay contiguous ascending (0..3): see
+  // isCrop/cropStage/isMatureCrop below, which all rely on that layout
+  // instead of a lookup table.
+  BLOCK_WHEAT_0 = 24, BLOCK_WHEAT_1, BLOCK_WHEAT_2, BLOCK_WHEAT_3,
+  BLOCK_CARROT_0, BLOCK_CARROT_1, BLOCK_CARROT_2, BLOCK_CARROT_3,
+  BLOCK_POTATO_0, BLOCK_POTATO_1, BLOCK_POTATO_2, BLOCK_POTATO_3,
+  BLOCK_TYPE_COUNT,
 };
 
 // Atlas tile ids; order matches the tile-drawer order in textures.cpp.
@@ -62,6 +75,16 @@ enum Tile : int {
   TILE_LEAVES_PEAR,
   TILE_LEAVES_CHERRY,
   TILE_LEAVES_ORANGE,
+  TILE_FARMLAND_TOP,
+  // Two tiles per crop kind, not four: stages 0-2 share a "sprout" look
+  // (differentiated from each other only by billboard height, the same
+  // trick tall grass already uses — see mesher.cpp), stage 3 gets its own
+  // fuller "mature" look. The 4 distinct BLOCK_* ids per kind still exist
+  // for stage tracking/persistence; they just don't need 4 distinct
+  // textures apiece.
+  TILE_WHEAT_SPROUT, TILE_WHEAT_MATURE,
+  TILE_CARROT_SPROUT, TILE_CARROT_MATURE,
+  TILE_POTATO_SPROUT, TILE_POTATO_MATURE,
 
   // Everything from here on is a flat ITEM sprite rather than a block face:
   // crafted goods have no cube in the world but still need an icon for the
@@ -102,6 +125,13 @@ enum Tile : int {
   TILE_COOKED_MEAT,
   TILE_BOAT,
   TILE_SWORD, // hand-drawn (art\sword.png), not procedural — see textures.cpp
+  // Harvested-crop slot icons (item_art.cpp) — deliberately separate art
+  // from the world block-face tiles (TILE_WHEAT_MATURE etc.) above, same as
+  // every fruit already keeps its own TILE_APPLE-style icon apart from its
+  // leaves-block face.
+  TILE_WHEAT,
+  TILE_CARROT,
+  TILE_POTATO,
   TILE_APPLE,
   TILE_PEACH,
   TILE_PEAR,
@@ -113,6 +143,17 @@ enum Tile : int {
   // flask, so the two read apart even at slot size (item_art.cpp).
   TILE_POTION_SMALL,
   TILE_POTION_BIG,
+  // One icon per fish species (item_art.cpp) — a killed fish (fish.h) drops
+  // ITEM_RAW_COD/SALMON/PUFFERFISH/RAW_TROPICAL_FISH, and each needs to read
+  // apart from the others at a glance the same way the fruits do.
+  TILE_RAW_COD,
+  TILE_RAW_SALMON,
+  TILE_RAW_PUFFERFISH,
+  TILE_RAW_TROPICAL_FISH,
+  TILE_RAW_SHARK,
+  TILE_COOKED_FISH,
+  TILE_POWER_AXE, // hand-drawn (art\power_axe.png), not procedural — see textures.cpp
+  TILE_SPEAR,     // hand-drawn (art\spear.png), not procedural — see textures.cpp
 
   // World textures for the crafted goods that can be placed. Separate from
   // the slot icons above: an icon is a small shape on a transparent field,
@@ -213,6 +254,40 @@ bool isFruitLeaves(uint8_t id);
 // picked, or -1 if `id` isn't one. Returned as int (not uint8_t) so -1 is a
 // real out-of-band value rather than wrapping to 255.
 int fruitItemForLeaves(uint8_t id);
+
+// Crops: wheat, carrots, potatoes, 4 growth stages each (BLOCK_WHEAT_0..
+// BLOCK_POTATO_3, laid out contiguously — see the enum comment in blocks.h).
+const int CROP_KIND_COUNT = 3;
+const int CROP_STAGE_COUNT = 4;
+// The stage-0 block id for each crop kind, in the same order as the
+// CraftItem each kind yields (ITEM_WHEAT, ITEM_CARROT, ITEM_POTATO) — for
+// main.cpp's tryPlantCrop to look up "which crop does this item plant."
+extern const uint8_t CROP_BASE_BLOCKS[CROP_KIND_COUNT];
+
+// True for any of the 12 crop-stage ids (any kind, any stage). Also
+// isPlant() — walk-through, cross-billboard, replaceable, washed away by
+// water, same as tall grass/flowers.
+bool isCrop(uint8_t id);
+
+// True for a crop at its final (harvestable) growth stage specifically.
+bool isMatureCrop(uint8_t id);
+
+// 0..3 growth stage for a crop id, or -1 if `id` isn't a crop.
+int cropStage(uint8_t id);
+
+// The next block id in this crop's growth sequence, or `id` unchanged if
+// it's already mature (nothing further to advance to) or not a crop.
+uint8_t nextCropStage(uint8_t id);
+
+// The CraftItem a crop yields when harvested/mined, regardless of its
+// current stage (the caller decides whether to actually grant it — see
+// isMatureCrop), or -1 if `id` isn't a crop. Same int-for-sentinel
+// convention as fruitItemForLeaves.
+int cropItemFor(uint8_t id);
+
+// The stage-0 block id planting this CraftItem produces, or -1 if `item`
+// isn't a crop item (ITEM_WHEAT/CARROT/POTATO).
+int cropBaseBlockForItem(uint8_t item);
 
 // A chest: a squat box with a lid that opens (see ChestState in chest.h). The
 // mesher bakes only the static body; the lid is drawn separately each frame

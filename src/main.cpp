@@ -13,6 +13,7 @@
 #include "furnace.h"
 #include "campfire.h"
 #include "worldgen.h"
+#include "noise.h"
 #include "mesher.h"
 #include "physics.h"
 #include "player.h"
@@ -80,7 +81,20 @@ static const double ARM_SWING_TIME = 0.35; // seconds for a collect/build swing
 static double g_walkPhase = 0;   // gait cycle, advances with distance walked
 static double g_walkAmount = 0;  // smoothed 0..1 swing strength
 static double g_airAmount = 0;   // smoothed 0..1 airborne-pose blend
+static double g_swimPhase = 0;   // kick/stroke cycle, advances continuously while swimming
+// Seconds since the session started, used to drift the clouds and time how
+// recently an animal/fish was last hit (see Animal/Fish::lastHitTime).
+static double g_elapsedTime = 0;
 static double g_armSwingTimer = 0;
+// Set alongside g_armSwingTimer whenever a mining/attack swing starts
+// (tryMine), from toolWeight() of whatever's actually gripped — the timer
+// still starts at the same ARM_SWING_TIME and the swing's POSE still comes
+// from the same 0..1 fraction of it (so screenshot/self-test code that
+// pokes g_armSwingTimer to an exact phase is unaffected), but it counts
+// down slower for a heavy item and faster for a light one, so a heavier
+// tool/weapon visibly winds up and comes down slower. 1.0 outside of a
+// mining/attack swing (building's own swing stays unscaled).
+static double g_armSwingWeight = 1.0;
 static bool g_swingLeftHand = false; // right hand collects, left hand builds
 
 static std::unique_ptr<World> g_world;
@@ -96,29 +110,24 @@ static std::vector<Boat> g_boats;
 static int g_playerBoatIndex = -1; // index into g_boats while driving, -1 when on foot
 static double g_boatRowPhase = 0;  // advances while actively rowing; drives paddle animation
 
-// A floating "-1.5" that pops up over an animal's head on a hit and fades
-// after half a second. World-space position, but drawn as flat 2D HUD text
-// (see worldToScreen) since there's no billboarded-3D-text machinery here.
-struct DamagePopup {
-  Vec3 position;
-  double amount;
-  double timer;
-};
-static std::vector<DamagePopup> g_damagePopups;
-const double DAMAGE_POPUP_LIFETIME = 0.5;
-
 // Camera matrices captured once per frame right after setup3D() — the exact
 // view+projection state every world-space point was drawn with — so
-// worldToScreen() can place 2D HUD text over a 3D position without needing
-// GLU's gluProject (build.bat links no glu32.lib, and this is the only
-// place that would ever need it).
+// worldToScreen() can place 2D HUD content over a 3D position without
+// needing GLU's gluProject (build.bat links no glu32.lib, and this is the
+// only place that would ever need it).
 static double g_camModelview[16], g_camProjection[16];
 static int g_camViewport[4];
+
 static bool g_invOpen = false; // inventory screen overlay (I key)
 static bool g_chestOpen = false; // chest screen overlay (E key on a chest)
 static bool g_fullMapOpen = false; // whole-world map overlay (M key)
 static int g_chestX = 0, g_chestY = 0, g_chestZ = 0; // which chest is showing
 static uint32_t g_currentSeed = 1337; // this session's terrain seed
+// 0..1 fraction of a day (0 = midnight, 0.25 = dawn/morning, 0.5 = noon, 0.75
+// = dusk), advanced every frame in updateFrame() and persisted in SaveState
+// so a reload resumes at roughly the same time — see dayNightState() below.
+static double g_timeOfDay = 0.25;
+const double DAY_LENGTH_SECONDS = 1200.0; // 20 minutes per full day/night cycle
 static Menu g_menu;
 static Settings g_settings;
 
@@ -171,6 +180,7 @@ static MoveInput getMoveInput() {
   in.right = (g_keys['D'] ? 1 : 0) - (g_keys['A'] ? 1 : 0);
   in.jump = g_keys[VK_SPACE];
   in.sprint = g_keys[VK_SHIFT];
+  in.swimDown = g_keys['C'];
   return in;
 }
 
@@ -211,7 +221,6 @@ static void createSession(const SaveState* save) {
 
   g_animals.clear(); // not persisted (like a furnace's lit state) — fresh each session
   g_animalSpawnTimer = 0;
-  g_damagePopups.clear();
   g_droppedItems.clear(); // dropped items don't survive a reload either
   g_fishes.clear();
   g_fishSpawnTimer = 0;
@@ -223,6 +232,7 @@ static void createSession(const SaveState* save) {
   // every new game gets a fresh random map; loads restore their saved seed
   g_currentSeed = save ? save->seed : randomSeed();
   setWorldSeed(g_currentSeed);
+  g_timeOfDay = save ? save->timeOfDay : 0.25;
 
   g_world = std::make_unique<World>();
   g_world->renderDistance = g_settings.renderDistance;
@@ -370,6 +380,20 @@ static void pauseGame() {
   g_menu.showPanel(MenuPanel::Pause);
 }
 
+// Health hit 0 (Player::update set g_player->dead): same "close panels,
+// freeze the world, release the cursor" shape as pauseGame(), but the red
+// Dead screen instead — no Resume (there's no game state worth resuming
+// into) and no respawn, so Restart/Load/Main Menu are the ways forward.
+static void killPlayer() {
+  if (g_state != GameState::Playing) return;
+  closeInventory();
+  closeChest();
+  g_state = GameState::Paused;
+  clearKeys();
+  setCursorCaptured(false);
+  g_menu.showPanel(MenuPanel::Dead);
+}
+
 static void startNewGame() {
   createSession(nullptr);
   beginPlaying();
@@ -427,6 +451,7 @@ static void performSave(const std::string& name) {
   if (!g_world || !g_player || !g_hotbar) return;
   SaveState s;
   s.seed = g_currentSeed;
+  s.timeOfDay = g_timeOfDay;
   s.hasPlayer = true;
   s.x = g_player->position.x;
   s.y = g_player->position.y;
@@ -497,24 +522,26 @@ static bool isLitHeatSource(int x, int y, int z) {
 }
 
 // True if the player is currently looking at a lit heat source within reach
-// AND has raw meat selected — the one condition the R key's cook action and
-// prompt both gate on.
+// AND has something cookable selected (raw meat or any raw fish species —
+// see cookedItemFor) — the one condition the R key's cook action and prompt
+// both gate on.
 static bool canCookNow() {
   if (!g_world || !g_player || !g_hotbar) return false;
-  if (g_hotbar->selectedBlockId() != ITEM_RAW_MEAT) return false;
+  if (cookedItemFor((uint8_t)g_hotbar->selectedBlockId()) < 0) return false;
   RaycastHit hit;
   if (!targetedBlock(hit, MINE_REACH)) return false;
   return isLitHeatSource(hit.pos[0], hit.pos[1], hit.pos[2]);
 }
 
-// Cooks one raw meat into one cooked meat — repeatable, so pressing R
+// Cooks one raw meat/fish into its cooked form — repeatable, so pressing R
 // several times cooks a whole stack one at a time rather than all at once.
 static void tryCook() {
   if (!canCookNow()) return;
+  int cooked = cookedItemFor((uint8_t)g_hotbar->selectedBlockId());
   Hotbar::Slot& slot = g_hotbar->slots[g_hotbar->selected];
   slot.count--;
   if (slot.count <= 0) { slot.blockId = -1; slot.count = 0; }
-  if (g_inventory) g_inventory->collect(*g_hotbar, ITEM_COOKED_MEAT, 1);
+  if (g_inventory) g_inventory->collect(*g_hotbar, cooked, 1);
 }
 
 // Cooked meat restores hunger 1:1, capped at max. Two of the three eat
@@ -549,6 +576,23 @@ static bool tryEatSelected() {
   slot.count--;
   if (slot.count <= 0) { slot.blockId = -1; slot.count = 0; }
   g_player->hunger = std::min(g_player->maxHunger, g_player->hunger + 1);
+  return true;
+}
+
+// Right-click while raw meat or a raw fish is selected: eating it uncooked
+// costs health instead of restoring hunger (isUnsafeRawFood) — the
+// incentive to cook first (R at a heat source, see tryCook) rather than a
+// block on eating it raw at all. No hunger gate, unlike tryEatSelected:
+// this is never the beneficial choice, so there's no "already full" case to
+// protect against.
+static bool tryEatRawUnsafe() {
+  if (!g_hotbar || !g_player || !isUnsafeRawFood((uint8_t)g_hotbar->selectedBlockId())) return false;
+  Hotbar::Slot& slot = g_hotbar->slots[g_hotbar->selected];
+  slot.count--;
+  if (slot.count <= 0) { slot.blockId = -1; slot.count = 0; }
+  const int RAW_FOOD_HEALTH_PENALTY = 2; // one heart
+  g_player->health = std::max(0, g_player->health - RAW_FOOD_HEALTH_PENALTY);
+  if (g_player->health <= 0) g_player->dead = true;
   return true;
 }
 
@@ -675,9 +719,12 @@ static bool nearBed() {
 
 // Sleeping (E key, near a bed): resets health to full for free, at the cost
 // of hunger draining twice as fast for a while afterward (player.h's
-// hungerBoostTimer does the actual math in Player::update). This game has
-// no day/night cycle to skip past like vanilla Minecraft's own bed does —
-// sleeping here is purely the health/hunger tradeoff.
+// hungerBoostTimer does the actual math in Player::update). A day/night
+// cycle exists now (g_timeOfDay), but sleeping deliberately does NOT skip
+// past it — whether it should is a real gameplay-balance call (free-heal-
+// anytime vs. gated-by-night) that deserves its own decision, not a silent
+// side effect here — so for now this stays purely the health/hunger
+// tradeoff it always was.
 const double SLEEP_HUNGER_BOOST_DURATION = 60.0; // ~2 extra hunger points lost over that span
 static void trySleep() {
   if (!g_player || !nearBed()) return;
@@ -754,28 +801,46 @@ static void tryMine() {
   // playMineSound() below, which only fires on a successful mine.
   bool holdingTool = g_inventory && isToolItem((uint8_t)g_inventory->mainHand.blockId);
   if (holdingTool) playSwingSound();
+  // Same "gripped tool, falling back to the hotbar selection" item the
+  // combat branches below resolve their own weapon from — whatever's
+  // actually being swung is what its weight should slow or quicken.
+  uint8_t swingingItem = holdingTool ? (uint8_t)g_inventory->mainHand.blockId
+                                     : (uint8_t)(g_hotbar ? g_hotbar->selectedBlockId() : -1);
+  g_armSwingWeight = toolWeight(swingingItem);
 
   // An animal in reach takes priority over mining a block behind it — the
-  // same swing either attacks or mines, never both.
-  int animalHit = raycastAnimal(g_animals, g_player->eyePosition(), lookDirection(), MINE_REACH);
+  // same swing either attacks or mines, never both. Riding a boat skips
+  // combat entirely (both hands are on the paddle, not swinging a weapon),
+  // so this whole priority check only runs on foot.
+  //
+  // Damage and reach both come from whatever's actually gripped in the hand
+  // (mainHand, the same slot holdingTool above checks) — every tiered
+  // tool/weapon is equippable there now, and that's what's rendered swinging
+  // in the player's hand, so it is what should land the hit. Falls back to
+  // the hotbar selection when nothing is equipped, so a tool that's merely
+  // selected (not yet dragged into the hand slot) still counts for
+  // something rather than silently attacking bare-handed. The spear's
+  // longer reach (attackReach) applies here too — that's its whole point.
+  uint8_t weapon = holdingTool ? (uint8_t)g_inventory->mainHand.blockId
+                               : (uint8_t)(g_hotbar ? g_hotbar->selectedBlockId() : -1);
+  double weaponReach = attackReach(weapon);
+  int animalHit = g_playerBoatIndex < 0
+                      ? raycastAnimal(g_animals, g_player->eyePosition(), lookDirection(), weaponReach)
+                      : -1;
   if (animalHit >= 0) {
     Animal& target = g_animals[animalHit];
-    // Damage comes from whatever's actually gripped in the hand (mainHand,
-    // the same slot holdingTool above checks) — every tiered tool/weapon is
-    // equippable there now, and that's what's rendered swinging in the
-    // player's hand, so it is what should land the hit. Falls back to the
-    // hotbar selection when nothing is equipped, so a tool that's merely
-    // selected (not yet dragged into the hand slot) still counts for
-    // something rather than silently attacking bare-handed.
-    uint8_t weapon = holdingTool ? (uint8_t)g_inventory->mainHand.blockId
-                                 : (uint8_t)(g_hotbar ? g_hotbar->selectedBlockId() : -1);
     double dmg = attackPower(weapon);
     target.health -= dmg;
     playHitSound();
-    g_damagePopups.push_back(
-        { Vec3(target.position.x, target.position.y + ANIMAL_SPECIES[target.species].height + 0.1,
-              target.position.z),
-         dmg, DAMAGE_POPUP_LIFETIME });
+    // Shows the floating health bar (drawEntityHealthBars) for the next 5
+    // seconds; refreshed on every hit so it stays up through a sustained
+    // attack and only fades once it actually stops.
+    target.lastHitTime = g_elapsedTime;
+    // Provoked: a prey species (AnimalSpeciesDef::predator false) spends
+    // this window running from the player instead of wandering; a predator
+    // spends it chasing and biting back (see the per-frame loops below).
+    target.provoked = true;
+    target.provokedTimer = 15.0;
     if (target.health <= 0 && !target.dying) {
       target.dying = true;
       target.deathTimer = 3.0;
@@ -785,10 +850,48 @@ static void tryMine() {
     return;
   }
 
+  // Same priority rule for fish: a fish in reach (underwater, say) is
+  // attacked instead of mining whatever's behind it — also skipped while
+  // boating, same as the animal check above.
+  int fishHit = g_playerBoatIndex < 0
+                    ? raycastFish(g_fishes, g_player->eyePosition(), lookDirection(), weaponReach)
+                    : -1;
+  if (fishHit >= 0) {
+    Fish& target = g_fishes[fishHit];
+    double dmg = attackPower(weapon);
+    target.health -= dmg;
+    playHitSound();
+    target.lastHitTime = g_elapsedTime;
+    // Only the shark ever does anything with this (FishSpeciesDef::
+    // attackPower is 0 for every other species, see the bite loop below) —
+    // harmless to set unconditionally, same as the animal provoke above.
+    target.provoked = true;
+    target.provokedTimer = 15.0;
+    if (target.health <= 0 && !target.dying) {
+      target.dying = true;
+      target.deathTimer = 2.0;
+      target.velocity = Vec3(0, 0, 0);
+    }
+    return;
+  }
+
   RaycastHit hit;
   if (!targetedBlock(hit, MINE_REACH)) return;
   uint8_t id = g_world->getBlock(hit.pos[0], hit.pos[1], hit.pos[2]);
   if (!isMinable(id)) return; // covers placed crafted goods, not just blocks
+
+  // Tilling: a hoe EQUIPPED in mainHand (not merely hotbar-selected — same
+  // slot the combat swing above resolves its weapon from) turns a targeted
+  // grass/dirt block into farmland instead of mining it. Using the tool is
+  // the point of the swing here, so this preempts the generic mine-and-
+  // collect fallback below entirely rather than collecting grass as dirt.
+  bool holdingHoe = g_inventory && (g_inventory->mainHand.blockId == ITEM_WOOD_HOE ||
+                                     g_inventory->mainHand.blockId == ITEM_STONE_HOE);
+  if (holdingHoe && (id == BLOCK_GRASS || id == BLOCK_DIRT)) {
+    remeshAll(g_world->setBlock(hit.pos[0], hit.pos[1], hit.pos[2], BLOCK_FARMLAND));
+    playPlaceSound();
+    return;
+  }
 
   if (isPanel(id)) {
     // A ladder is placed (and extended) as one connected vertical run of up
@@ -902,6 +1005,20 @@ static void tryMine() {
     return;
   }
 
+  if (isCrop(id)) {
+    // The crop occupies its OWN cell, one above the farmland it was planted
+    // on (see tryPlantCrop) — clearing it to air just exposes the farmland
+    // underneath again, already untouched, ready to replant. Mirrors the
+    // flower branch above: mining any stage clears it, but only a MATURE
+    // crop actually yields its item.
+    int cx = hit.pos[0], cy = hit.pos[1], cz = hit.pos[2];
+    remeshAll(g_world->setBlock(cx, cy, cz, BLOCK_AIR));
+    g_world->cropTimers.erase({ cx, cy, cz });
+    if (isMatureCrop(id)) g_inventory->collect(*g_hotbar, (uint8_t)cropItemFor(id), 1);
+    playMineSound();
+    return;
+  }
+
   if (isStairs(id)) g_world->stairFacings.erase({ hit.pos[0], hit.pos[1], hit.pos[2] });
   if (isFurnace(id)) g_world->furnaces.erase({ hit.pos[0], hit.pos[1], hit.pos[2] });
   std::vector<Chunk*> affected = g_world->setBlock(hit.pos[0], hit.pos[1], hit.pos[2], BLOCK_AIR);
@@ -957,6 +1074,19 @@ static void pickFlower(int x, int y, int z, uint8_t id) {
   playMineSound();
 }
 
+// E on a MATURE crop: harvests it, clearing its own cell to air (exposing
+// the farmland underneath, untouched — same geometry note as tryMine's own
+// crop branch) and granting the item. Callers gate on isMatureCrop
+// themselves (the interact prompt and the E-key dispatch both check before
+// calling this), same as every other E-triggered action here.
+static void harvestCrop(int x, int y, int z, uint8_t id) {
+  if (!g_world || !g_inventory) return;
+  remeshAll(g_world->setBlock(x, y, z, BLOCK_AIR));
+  g_world->cropTimers.erase({ x, y, z });
+  g_inventory->collect(*g_hotbar, (uint8_t)cropItemFor(id), 1);
+  playMineSound();
+}
+
 // The player's horizontal look direction, snapped to the nearest of the 4
 // cardinal directions: 0 -Z, 1 +Z, 2 -X, 3 +X (matching panelFacing's/
 // stairFacing's convention). Used to orient whatever gets placed toward
@@ -976,12 +1106,75 @@ static bool placementOverlapsPlayer(int px, int py, int pz) {
          py < p.y + PLAYER_HEIGHT;
 }
 
+// Growth pacing shared by tryPlantCrop's initial timer and updateCropGrowth's
+// re-roll below — same range World::applyEdits' own re-arm uses (world.cpp),
+// kept in sync by hand since the two are in different translation units.
+static const double CROP_GROWTH_MIN_SECONDS = 40.0, CROP_GROWTH_MAX_SECONDS = 80.0;
+static Mulberry32 g_cropGrowthRng(0x6E17u);
+
+// Planting: right-click a crop item at farmland within reach places its
+// stage-0 growth block in the cell above it — the harvested crop item
+// doubles as its own seed (blocks.h's cropBaseBlockForItem), same as a real
+// carrot/potato. Same tryPlaceBoat()-style special case, checked ahead of
+// the normal build logic since a crop plants a DIFFERENT block than the
+// item consumed (the generic path below would place the item's own id).
+static bool tryPlantCrop() {
+  if (!g_world || !g_hotbar) return false;
+  int baseBlock = cropBaseBlockForItem((uint8_t)g_hotbar->selectedBlockId());
+  if (baseBlock < 0) return false;
+  RaycastHit hit;
+  if (!targetedBlock(hit, PLACE_REACH)) return false;
+  if (g_world->getBlock(hit.pos[0], hit.pos[1], hit.pos[2]) != BLOCK_FARMLAND) return false;
+  int px = hit.pos[0], py = hit.pos[1] + 1, pz = hit.pos[2];
+  if (g_world->getBlock(px, py, pz) != BLOCK_AIR) return false;
+  if (placementOverlapsPlayer(px, py, pz)) return false;
+  if (g_hotbar->takeSelected() < 0) return false;
+  remeshAll(g_world->setBlock(px, py, pz, (uint8_t)baseBlock));
+  g_world->cropTimers[{ px, py, pz }] = CROP_GROWTH_MIN_SECONDS +
+      g_cropGrowthRng.next() * (CROP_GROWTH_MAX_SECONDS - CROP_GROWTH_MIN_SECONDS);
+  playPlaceSound();
+  return true;
+}
+
+// Advances every planted crop's growth timer
+// the block on to its next stage on expiry. Called every frame alongside
+// updateChestAnimations/updateDoorAnimations/updateTrapdoorAnimations —
+// same "always ticking while playing" cadence.
+static void updateCropGrowth(double dt) {
+  for (auto it = g_world->cropTimers.begin(); it != g_world->cropTimers.end();) {
+    it->second -= dt;
+    if (it->second > 0) { ++it; continue; }
+    const EditKey& k = it->first;
+    uint8_t id = g_world->getBlock(k.x, k.y, k.z);
+    if (!isCrop(id) || isMatureCrop(id)) {
+      it = g_world->cropTimers.erase(it); // no longer a growing crop here
+      continue;
+    }
+    uint8_t next = nextCropStage(id);
+    remeshAll(g_world->setBlock(k.x, k.y, k.z, next));
+    if (isMatureCrop(next)) {
+      it = g_world->cropTimers.erase(it); // fully grown: nothing left to time
+    } else {
+      it->second = CROP_GROWTH_MIN_SECONDS +
+                   g_cropGrowthRng.next() * (CROP_GROWTH_MAX_SECONDS - CROP_GROWTH_MIN_SECONDS);
+      ++it;
+    }
+  }
+}
+
 static void tryPlace() {
   if (!g_world || !g_player) return;
+  // Planting is E (see the WM_KEYDOWN 'E' handler's BLOCK_FARMLAND branch),
+  // not right-click — matching harvest, which is also E, not left-click.
+  // wheat/carrots/potatoes are dual-purpose (isEatableFood AND plantable),
+  // so right-click while one is selected just eats it, same as any other
+  // food item.
   if (tryEatSelected()) return;
+  if (tryEatRawUnsafe()) return;
   if (tryDrinkSelected()) return;
   if (tryPlaceBoat()) return;
   g_armSwingTimer = ARM_SWING_TIME;
+  g_armSwingWeight = 1.0; // building isn't a weighted tool swing, unlike tryMine's
   g_swingLeftHand = true; // building is the left hand
   RaycastHit hit;
   if (!targetedBlock(hit, PLACE_REACH)) return;
@@ -992,7 +1185,15 @@ static void tryPlace() {
   // overwrites the tuft rather than being refused.
   uint8_t target = g_world->getBlock(px, py, pz);
   if (target != BLOCK_AIR && !isPlant(target)) return;
-  if (placementOverlapsPlayer(px, py, pz)) return;
+  // Building straight down into your own feet cell (aiming at the top face
+  // of whatever you're standing on) is the one placementOverlapsPlayer
+  // refusal that should go through anyway: instead of a wall you can never
+  // pillar yourself up out of, let it place and lift the player onto the new
+  // block's top face afterward — the same "look down, build up" scaffolding
+  // move Minecraft itself allows.
+  bool underOwnFeet = hit.normal[0] == 0 && hit.normal[1] == 1 && hit.normal[2] == 0 &&
+                      py == (int)std::floor(g_player->position.y + 1e-4);
+  if (!underOwnFeet && placementOverlapsPlayer(px, py, pz)) return;
   int selected = g_hotbar->selectedBlockId();
   if (selected < 0) return;
   // Checked BEFORE the item is spent: a tool or a stick is not building
@@ -1042,6 +1243,7 @@ static void tryPlace() {
   if (blockId < 0) return;
 
   std::vector<Chunk*> affected = g_world->setBlock(px, py, pz, (uint8_t)blockId);
+  if (underOwnFeet) g_player->position.y = py + 1; // stand on top of the block just placed underfoot
   // A ladder climbs LADDER_PLACE_LENGTH blocks in one go rather than one rung
   // at a time: fill upward as far as it's clear, stopping at the first
   // obstruction (or the world top). Placing another ladder above an existing
@@ -1200,8 +1402,46 @@ static void underwaterTint(double depth, WaterView& out) {
 
 // Recomputed once per frame, before rendering.
 static WaterView g_waterView;
-// Seconds since the session started, used to drift the clouds.
-static double g_elapsedTime = 0;
+
+// Sky/fog color and a 0..1 "darkness" factor, driven by g_timeOfDay. No
+// dynamic lighting exists in this engine (every face's shading is baked at
+// mesh time — see mesher.cpp's FACES), so night isn't relit geometry: it's
+// this color shift plus a full-screen dark tint (drawn the same way
+// WaterView's own submerged tint is, see render() below).
+struct DayNightKeyframe { double t, r, g, b, darkness; };
+const DayNightKeyframe DAY_NIGHT_KEYFRAMES[] = {
+  { 0.00, 0.04, 0.05, 0.12, 0.85 }, // midnight
+  { 0.22, 0.12, 0.09, 0.16, 0.55 }, // pre-dawn
+  { 0.30, 0.95, 0.55, 0.30, 0.10 }, // dawn glow
+  { 0.40, SKY_R, SKY_G, SKY_B, 0.0 }, // morning: full day
+  { 0.60, SKY_R, SKY_G, SKY_B, 0.0 }, // afternoon: still full day
+  { 0.70, 0.95, 0.45, 0.25, 0.10 }, // dusk glow
+  { 0.80, 0.10, 0.07, 0.14, 0.55 }, // early night
+  { 1.00, 0.04, 0.05, 0.12, 0.85 }, // midnight again (wraps back to t=0)
+};
+const int DAY_NIGHT_KEYFRAME_COUNT = (int)(sizeof(DAY_NIGHT_KEYFRAMES) / sizeof(DAY_NIGHT_KEYFRAMES[0]));
+
+// Pure function (no GL context needed), same convention underwaterTint above
+// documents — lerps between the two bracketing keyframes with a smoothstep
+// ease so the transition has no visible hinge at each keyframe.
+static void dayNightState(double t, double& skyR, double& skyG, double& skyB, double& darkness) {
+  t = std::fmod(t, 1.0);
+  if (t < 0) t += 1.0;
+  int i = 0;
+  while (i < DAY_NIGHT_KEYFRAME_COUNT - 2 && DAY_NIGHT_KEYFRAMES[i + 1].t <= t) i++;
+  const DayNightKeyframe& a = DAY_NIGHT_KEYFRAMES[i];
+  const DayNightKeyframe& b = DAY_NIGHT_KEYFRAMES[i + 1];
+  double span = b.t - a.t;
+  double localT = span > 1e-9 ? (t - a.t) / span : 0.0;
+  double s = localT * localT * (3 - 2 * localT); // smoothstep
+  skyR = a.r + (b.r - a.r) * s;
+  skyG = a.g + (b.g - a.g) * s;
+  skyB = a.b + (b.b - a.b) * s;
+  darkness = a.darkness + (b.darkness - a.darkness) * s;
+}
+
+// Recomputed once per frame, before rendering, alongside g_waterView.
+static double g_skyR = SKY_R, g_skyG = SKY_G, g_skyB = SKY_B, g_darkness = 0;
 
 static WaterView waterViewState() {
   WaterView view;
@@ -1345,7 +1585,7 @@ static void setup3D() {
   } else {
     // fog matches THREE.Fog(sky, CS*(rd-1.5), CS*(rd+0.5))
     int rd = g_world->renderDistance;
-    GLfloat fogColor[4] = { (GLfloat)SKY_R, (GLfloat)SKY_G, (GLfloat)SKY_B, 1.0f };
+    GLfloat fogColor[4] = { (GLfloat)g_skyR, (GLfloat)g_skyG, (GLfloat)g_skyB, 1.0f };
     glFogfv(GL_FOG_COLOR, fogColor);
     glFogf(GL_FOG_START, (GLfloat)(CHUNK_SIZE * (rd - 1.5)));
     glFogf(GL_FOG_END, (GLfloat)(CHUNK_SIZE * (rd + 0.5)));
@@ -1402,6 +1642,25 @@ static void drawInteractPrompt() {
         label = "Press E to pick fruit";
       } else if (isFlower(id)) {
         label = "Press E to pick flower";
+      } else if (isMatureCrop(id)) {
+        label = "Press E to harvest";
+      } else if (isCrop(id)) {
+        // Temporary growth-debug readout (diagnosing a report of crops never
+        // advancing) — shows the live cropTimers entry for exactly the cell
+        // being looked at, so a stalled timer or a missing entry is visible
+        // in-game instead of only inferred from waiting.
+        static char growLabel[64];
+        auto it = g_world->cropTimers.find({ hx, hy, hz });
+        if (it == g_world->cropTimers.end()) {
+          std::snprintf(growLabel, sizeof(growLabel), "stage %d/4, NO TIMER", cropStage(id) + 1);
+        } else {
+          std::snprintf(growLabel, sizeof(growLabel), "stage %d/4, %.0fs left", cropStage(id) + 1,
+                        it->second);
+        }
+        label = growLabel;
+      } else if (id == BLOCK_FARMLAND && g_hotbar &&
+                 cropBaseBlockForItem((uint8_t)g_hotbar->selectedBlockId()) >= 0) {
+        label = "Press E to plant";
       }
     }
   }
@@ -1412,6 +1671,24 @@ static void drawInteractPrompt() {
   double ty = cy + 22; // just below the crosshair
   drawText(g_fontButton, tx + 1, ty + 1, label, 0, 0, 0, 1); // shadow
   drawText(g_fontButton, tx, ty, label, 1, 1, 1, 1);
+}
+
+// Swim controls, left-center of the screen, only while actually in the
+// water (Player::swimming) — WASD alone isn't obvious once gravity stops
+// applying and Space/C take over the vertical axis.
+static void drawSwimHint() {
+  if (!g_player || !g_player->swimming) return;
+  const char* line1 = "Space: float up";
+  const char* line2 = "C: float down";
+  const char* line3 = "WASD: swim";
+  double lineH = 21;
+  double x = 24;
+  double y = g_winH / 2.0 - lineH * 1.5;
+  for (const char* line : { line1, line2, line3 }) {
+    drawText(g_fontHint, x + 1, y + 1, line, 0, 0, 0, 1); // shadow
+    drawText(g_fontHint, x, y, line, 1, 1, 1, 0.85);
+    y += lineH;
+  }
 }
 
 // Vanilla's own 9x9 HUD icons, traced pixel-for-pixel from the sprites
@@ -1429,7 +1706,7 @@ struct IconColor {
 };
 
 static void drawPixelIcon(double x, double y, double size, double fraction,
-                          const char* const* rows, const IconColor* palette) {
+                          const char* const* rows, const IconColor* palette, double alpha = 1.0) {
   if (fraction <= 0) return;
   const double CELL = size / 9.0;
   const double maxW = size * fraction;
@@ -1442,12 +1719,12 @@ static void drawPixelIcon(double x, double y, double size, double fraction,
         if (p->key == ch) { r = p->r; g = p->g; b = p->b; break; }
       }
       double w = clampd(maxW - col * CELL, 0, CELL);
-      if (w > 0) drawRect(x + col * CELL, y + row * CELL, w, CELL, r, g, b, 1);
+      if (w > 0) drawRect(x + col * CELL, y + row * CELL, w, CELL, r, g, b, alpha);
     }
   }
 }
 
-static void drawHeartIcon(double x, double y, double size, double fraction) {
+static void drawHeartIcon(double x, double y, double size, double fraction, double alpha = 1.0) {
   static const char* const ROWS[9] = {
     "..##.##..",
     ".#RR#RR#.",
@@ -1466,7 +1743,7 @@ static void drawHeartIcon(double x, double y, double size, double fraction) {
     { 'H', 1.00, 0.78, 0.78 }, // top-left shine
     { 0, 0, 0, 0 },
   };
-  drawPixelIcon(x, y, size, fraction, ROWS, PALETTE);
+  drawPixelIcon(x, y, size, fraction, ROWS, PALETTE, alpha);
 }
 
 static void drawDrumstickIcon(double x, double y, double size, double fraction) {
@@ -1492,6 +1769,30 @@ static void drawDrumstickIcon(double x, double y, double size, double fraction) 
     { 'd', 0.38, 0.24, 0.11 }, // darkest meat
     { 'B', 0.89, 0.84, 0.67 }, // bone
     { 'W', 1.00, 0.97, 0.86 }, // bone shine
+    { 0, 0, 0, 0 },
+  };
+  drawPixelIcon(x, y, size, fraction, ROWS, PALETTE);
+}
+
+// A simple pale-blue air bubble — same outline/fill/highlight construction
+// as the heart and drumstick icons above, drawn above the hunger row only
+// while Player::oxygen is below max (see drawHealthHunger).
+static void drawBubbleIcon(double x, double y, double size, double fraction) {
+  static const char* const ROWS[9] = {
+    ".........",
+    "..#####..",
+    ".#BBBBB#.",
+    "#BBHBBBB#",
+    "#BBBBBBB#",
+    "#BBBBBBB#",
+    ".#BBBBB#.",
+    "..#####..",
+    ".........",
+  };
+  static const IconColor PALETTE[] = {
+    { '#', 0.05, 0.10, 0.22 }, // outline
+    { 'B', 0.55, 0.78, 0.98 }, // main pale blue
+    { 'H', 0.90, 0.97, 1.00 }, // top-left shine
     { 0, 0, 0, 0 },
   };
   drawPixelIcon(x, y, size, fraction, ROWS, PALETTE);
@@ -1531,7 +1832,24 @@ static void drawHealthHunger() {
   double rowY = hy - ROW_GAP - STAT_ICON;
   drawStatRow(g_player->health, g_player->maxHealth, hx, rowY, true);
   double drumstickRowW = HUNGER_PIPS_SHOWN * (STAT_ICON + STAT_GAP) - STAT_GAP;
-  drawStatRow(g_player->hunger, HUNGER_PIPS_SHOWN * 2, hx + hw - drumstickRowW, rowY, false);
+  double drumstickRowX = hx + hw - drumstickRowW;
+  drawStatRow(g_player->hunger, HUNGER_PIPS_SHOWN * 2, drumstickRowX, rowY, false);
+
+  // Bubbles: only shown while actually short of breath, same "row only
+  // appears when it means something" convention vanilla's own HUD uses. One
+  // pip per oxygen point (not 2-per-pip like hearts/hunger) — oxygen only
+  // ever moves in whole points, so there's no half-pip state to show.
+  if (g_player->oxygen < g_player->maxOxygen) {
+    int pips = g_player->maxOxygen;
+    double bubbleRowY = rowY - ROW_GAP - STAT_ICON;
+    for (int i = 0; i < pips; i++) {
+      double ix = drumstickRowX + i * (STAT_ICON + STAT_GAP);
+      drawRect(ix, bubbleRowY, STAT_ICON, STAT_ICON, 0.12, 0.12, 0.12, 0.55);
+      drawRectOutline(ix, bubbleRowY, STAT_ICON, STAT_ICON, 1, 0, 0, 0, 0.6);
+      double fraction = i < g_player->oxygen ? 1.0 : 0.0;
+      drawBubbleIcon(ix, bubbleRowY, STAT_ICON, fraction);
+    }
+  }
 }
 
 // Manual gluProject: multiplies through the camera matrices captured at the
@@ -1556,30 +1874,47 @@ static bool worldToScreen(const Vec3& p, double& outX, double& outY) {
   return true;
 }
 
-static void drawDamagePopups() {
-  for (const DamagePopup& p : g_damagePopups) {
-    double sx, sy;
-    if (!worldToScreen(p.position, sx, sy)) continue;
-    char buf[16];
-    std::snprintf(buf, sizeof(buf), "-%.1f", p.amount);
-    double fade = clampd(p.timer / DAMAGE_POPUP_LIFETIME, 0, 1);
-    double tw = textWidth(g_fontButton, buf);
-    // Drifts up slightly over its lifetime, fading out.
-    double ty = sy - (1.0 - fade) * 16;
-    drawText(g_fontButton, sx - tw / 2 + 1, ty + 1, buf, 0, 0, 0, fade * 0.8); // shadow
-    drawText(g_fontButton, sx - tw / 2, ty, buf, 1, 0.25, 0.25, fade);
+// A small floating bar over an animal's/fish's head, its red fill scaled to
+// health/maxHealth — shown only while HEALTH_BAR_SHOW_DURATION seconds
+// haven't yet passed since Animal/Fish::lastHitTime, so it appears on a hit
+// and disappears again once the attack has actually stopped, no raw number
+// attached either way.
+const double HEALTH_BAR_SHOW_DURATION = 5.0;
+const double HEALTH_BAR_W = 32, HEALTH_BAR_H = 5;
+
+static void drawHealthBar(const Vec3& worldPos, double health, double maxHealth) {
+  double sx, sy;
+  if (!worldToScreen(worldPos, sx, sy)) return;
+  double frac = maxHealth > 0 ? clampd(health / maxHealth, 0, 1) : 0;
+  double x = sx - HEALTH_BAR_W / 2, y = sy;
+  drawRect(x - 1, y - 1, HEALTH_BAR_W + 2, HEALTH_BAR_H + 2, 0, 0, 0, 0.6); // shadow/border
+  drawRect(x, y, HEALTH_BAR_W, HEALTH_BAR_H, 0.15, 0.15, 0.15, 0.85);       // empty track
+  drawRect(x, y, HEALTH_BAR_W * frac, HEALTH_BAR_H, 0.85, 0.12, 0.12, 1.0); // health fill
+}
+
+static void drawEntityHealthBars() {
+  for (const Animal& a : g_animals) {
+    if (a.dying || g_elapsedTime - a.lastHitTime > HEALTH_BAR_SHOW_DURATION) continue;
+    Vec3 pos(a.position.x, a.position.y + ANIMAL_SPECIES[a.species].height + 0.15, a.position.z);
+    drawHealthBar(pos, a.health, ANIMAL_SPECIES[a.species].maxHealth);
+  }
+  for (const Fish& f : g_fishes) {
+    if (f.dying || g_elapsedTime - f.lastHitTime > HEALTH_BAR_SHOW_DURATION) continue;
+    Vec3 pos(f.position.x, f.position.y + FISH_SPECIES[f.species].halfHeight * f.scale + 0.15, f.position.z);
+    drawHealthBar(pos, f.health, FISH_SPECIES[f.species].maxHealth);
   }
 }
 
 static void render() {
   glViewport(0, 0, g_winW, g_winH);
   g_waterView = waterViewState();
+  dayNightState(g_timeOfDay, g_skyR, g_skyG, g_skyB, g_darkness);
   if (g_world) {
     if (g_waterView.submerged) {
       // no sky underwater: the background is the water itself
       glClearColor((GLfloat)g_waterView.r, (GLfloat)g_waterView.g, (GLfloat)g_waterView.b, 1);
     } else {
-      glClearColor((GLfloat)SKY_R, (GLfloat)SKY_G, (GLfloat)SKY_B, 1);
+      glClearColor((GLfloat)g_skyR, (GLfloat)g_skyG, (GLfloat)g_skyB, 1);
     }
   } else {
     glClearColor(0, 0, 0, 1);
@@ -1590,7 +1925,7 @@ static void render() {
     setup3D();
     // Grab the camera transform right as it's set — every world-space point
     // drawn this frame goes through exactly this modelview/projection, so
-    // this is what worldToScreen() needs to place damage-popup text later
+    // this is what worldToScreen() needs to place damage-popup hearts later
     // in the 2D HUD pass.
     glGetDoublev(GL_MODELVIEW_MATRIX, g_camModelview);
     glGetDoublev(GL_PROJECTION_MATRIX, g_camProjection);
@@ -1639,6 +1974,7 @@ static void render() {
       anim.heldTool = g_inventory ? g_inventory->mainHand.blockId : -1;
       anim.boating = g_playerBoatIndex >= 0;
       anim.rowPhase = g_boatRowPhase;
+      anim.swimPhase = g_swimPhase;
       drawPlayerModel(*g_player, anim);
       glBindTexture(GL_TEXTURE_2D, atlasTextureId()); // restore for water
     }
@@ -1763,16 +2099,23 @@ static void render() {
 
   begin2D(g_winW, g_winH);
   // Submerged tint over the whole frame, under the HUD so it stays readable.
+  // Mutually exclusive with the night tint below — same reason clouds are
+  // already skipped underwater (main.cpp's drawClouds call): nothing of the
+  // sky/night is visible from down there, and stacking both would just
+  // double-darken the screen.
   if (g_waterView.submerged) {
     drawRect(0, 0, g_winW, g_winH, g_waterView.r, g_waterView.g, g_waterView.b,
              g_waterView.tintAlpha);
+  } else if (g_darkness > 0) {
+    drawRect(0, 0, g_winW, g_winH, 0.02, 0.03, 0.10, g_darkness * 0.75);
   }
   if (g_world && g_hotbar && !g_invOpen && !g_chestOpen && !g_fullMapOpen) g_hotbar->draw(g_winW, g_winH);
   if (g_state == GameState::Playing && !g_invOpen && !g_chestOpen && !g_fullMapOpen) {
     drawHealthHunger();
-    drawDamagePopups();
+    drawEntityHealthBars();
     drawCrosshair();
     drawInteractPrompt();
+    drawSwimHint();
     drawMinimap(g_winW, g_winH, g_player ? g_player->yaw : 0.0, g_boats);
     if (g_hudMsgTimer > 0 && !g_hudMsg.empty()) {
       double tw = textWidth(g_fontMsg, g_hudMsg.c_str());
@@ -1820,9 +2163,11 @@ static void updateFrame(double dt) {
   if (g_hudMsgTimer > 0) g_hudMsgTimer -= dt;
 
   if (g_state == GameState::Playing && g_world && g_player) {
+    g_timeOfDay = std::fmod(g_timeOfDay + dt / DAY_LENGTH_SECONDS, 1.0);
     updateChestAnimations(*g_world, dt); // lids ease open/closed even while the screen has the cursor
     updateDoorAnimations(*g_world, dt);
     updateTrapdoorAnimations(*g_world, dt);
+    updateCropGrowth(dt);
 
     if (g_cursorCaptured) {
       // accumulate relative mouse movement by recentering the cursor
@@ -1853,6 +2198,7 @@ static void updateFrame(double dt) {
         g_player->update(dt, *g_world, getMoveInput());
         checkTrapdoorTrigger(dt);
       }
+      if (g_player->dead) killPlayer();
     }
 
     // limb animation: gait advances with actual ground movement; the cycle
@@ -1863,7 +2209,15 @@ static void updateFrame(double dt) {
     if (g_player->onGround) g_walkPhase += hspeed * dt * 3.0;
     double airTarget = g_player->onGround ? 0.0 : 1.0;
     g_airAmount += (airTarget - g_airAmount) * std::min(1.0, dt * 8);
-    if (g_armSwingTimer > 0) g_armSwingTimer = std::max(0.0, g_armSwingTimer - dt);
+    // Not gated on onGround like the walk cycle above — a swimmer is rarely
+    // standing on anything, so the kick/stroke needs to keep going regardless.
+    if (g_player->swimming) g_swimPhase += dt * 2.5;
+    // Divided by weight, not multiplied: a heavier item counts down SLOWER
+    // (more real seconds to reach the same pose fraction), a lighter one
+    // faster — see g_armSwingWeight.
+    if (g_armSwingTimer > 0) {
+      g_armSwingTimer = std::max(0.0, g_armSwingTimer - dt / g_armSwingWeight);
+    }
 
     auto removed = g_world->updateLoadedChunks(g_player->position.x, g_player->position.z);
     for (auto& chunk : removed) disposeChunk(*chunk);
@@ -1872,7 +2226,34 @@ static void updateFrame(double dt) {
     worldMapUpdate(*g_world, g_player->position.x, g_player->position.z);
     minimapUpdate(*g_world, g_player->position.x, g_player->position.z);
 
-    for (Animal& a : g_animals) updateAnimal(a, *g_world, dt);
+    for (Animal& a : g_animals) updateAnimal(a, *g_world, dt, g_player->position);
+
+    // Predators that are provoked and close enough bite back, on their own
+    // cooldown — the flip side of the player's own swing above, resolved
+    // here (not in animal.cpp) for the same reason tryMine() resolves
+    // player-vs-animal combat here rather than in updateAnimal.
+    for (Animal& a : g_animals) {
+      if (a.dying || !a.provoked || !ANIMAL_SPECIES[a.species].predator) {
+        a.attackCooldown = 0;
+        continue;
+      }
+      if (a.attackCooldown > 0) {
+        a.attackCooldown -= dt;
+        continue;
+      }
+      const double BITE_RANGE = 1.0;
+      double dx = a.position.x - g_player->position.x, dz = a.position.z - g_player->position.z;
+      if (dx * dx + dz * dz > BITE_RANGE * BITE_RANGE) continue;
+      int dmg = std::max(1, (int)std::lround(attackPowerFor(a.species)));
+      g_player->health = std::max(0, g_player->health - dmg);
+      a.attackCooldown = 1.2;
+      a.attackLungeTimer = 0.25; // visible charge into the bite, see updateAnimal
+      playHitSound();
+      if (g_player->health <= 0) {
+        g_player->dead = true;
+        killPlayer();
+      }
+    }
 
     // Death sequence: count down the lie-down, then grant meat and remove.
     for (size_t i = 0; i < g_animals.size();) {
@@ -1891,16 +2272,6 @@ static void updateFrame(double dt) {
       i++;
     }
 
-    // Floating damage numbers fade out and go away on their own.
-    for (size_t i = 0; i < g_damagePopups.size();) {
-      g_damagePopups[i].timer -= dt;
-      if (g_damagePopups[i].timer <= 0) {
-        g_damagePopups[i] = g_damagePopups.back();
-        g_damagePopups.pop_back();
-        continue;
-      }
-      i++;
-    }
 
     // Dropped items: fall/settle physics only — picking one up is a
     // deliberate E press now (tryPickUpItem), not automatic on approach.
@@ -1915,6 +2286,51 @@ static void updateFrame(double dt) {
     }
 
     for (Fish& f : g_fishes) updateFish(f, *g_world, dt, g_player->position);
+
+    // A provoked shark that's close enough bites back, on its own cooldown
+    // — the water counterpart of the land-predator loop above.
+    for (Fish& f : g_fishes) {
+      if (f.dying || !f.provoked || FISH_SPECIES[f.species].attackPower <= 0) {
+        f.attackCooldown = 0;
+        continue;
+      }
+      if (f.attackCooldown > 0) {
+        f.attackCooldown -= dt;
+        continue;
+      }
+      const double SHARK_BITE_RANGE = 1.0;
+      double dx = f.position.x - g_player->position.x, dy = f.position.y - g_player->position.y,
+             dz = f.position.z - g_player->position.z;
+      if (dx * dx + dy * dy + dz * dz > SHARK_BITE_RANGE * SHARK_BITE_RANGE) continue;
+      int dmg = std::max(1, (int)std::lround(FISH_SPECIES[f.species].attackPower));
+      g_player->health = std::max(0, g_player->health - dmg);
+      f.attackCooldown = 1.2;
+      f.attackLungeTimer = 0.25; // visible charge into the bite, see updateFish
+      playHitSound();
+      if (g_player->health <= 0) {
+        g_player->dead = true;
+        killPlayer();
+      }
+    }
+
+    // Death sequence: count down the lie-still, then grant the species' raw
+    // fish item and remove — same convention as the animal loop above.
+    for (size_t i = 0; i < g_fishes.size();) {
+      Fish& f = g_fishes[i];
+      if (f.dying) {
+        f.deathTimer -= dt;
+        if (f.deathTimer <= 0) {
+          if (g_inventory && g_hotbar) {
+            g_inventory->collect(*g_hotbar, fishItemFor(f.species), 1);
+          }
+          g_fishes[i] = g_fishes.back();
+          g_fishes.pop_back();
+          continue; // don't advance i — a new element just landed here
+        }
+      }
+      i++;
+    }
+
     g_fishSpawnTimer += dt;
     const double FISH_SPAWN_INTERVAL = 3.0;
     if (g_fishSpawnTimer >= FISH_SPAWN_INTERVAL) {
@@ -2035,6 +2451,10 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
               pickFruitFromLeaves(hit.pos[0], hit.pos[1], hit.pos[2], id);
             } else if (isFlower(id)) {
               pickFlower(hit.pos[0], hit.pos[1], hit.pos[2], id);
+            } else if (isMatureCrop(id)) {
+              harvestCrop(hit.pos[0], hit.pos[1], hit.pos[2], id);
+            } else if (id == BLOCK_FARMLAND) {
+              tryPlantCrop(); // no-ops if the hotbar selection isn't a crop item
             }
           }
         }
@@ -2768,6 +3188,75 @@ static int runScreenshotMode(const char* path) {
 
   teardownSession();
   return ok ? 0 : 1;
+}
+
+// Diagnostic-only capture (not part of the regular --screenshot sweep):
+// tills a patch, plants wheat through the REAL tryMine()/tryPlace() click
+// handlers exactly like a player would, then forces the same planted block
+// through all 4 growth stages one at a time, screenshotting each — close up,
+// aimed straight at it, so drawInteractPrompt's growth-debug readout is
+// visible in frame. Answers "does the block/texture/readout actually change"
+// directly, instead of only inferring it from getBlock() in selftest.
+static int runCropTestMode() {
+  SaveState fixedSeed;
+  fixedSeed.seed = 1337;
+  createSession(&fixedSeed);
+  g_state = GameState::Playing;
+  g_world->updateLoadedChunks(9, 9);
+
+  auto lookAt = [&](double tx, double ty, double tz) {
+    Vec3 eye = g_player->eyePosition();
+    double dx = tx - eye.x, dy = ty - eye.y, dz = tz - eye.z;
+    double horiz = std::sqrt(dx * dx + dz * dz);
+    g_player->pitch = std::atan2(dy, horiz);
+    g_player->yaw = std::atan2(-dx, -dz);
+  };
+  auto pump = [&]() {
+    MSG msg;
+    while (PeekMessageA(&msg, nullptr, 0, 0, PM_REMOVE)) {
+      TranslateMessage(&msg);
+      DispatchMessageA(&msg);
+    }
+    render();
+    SwapBuffers(g_dc);
+  };
+
+  for (int bx = 8; bx <= 11; bx++) {
+    for (int bz = 8; bz <= 11; bz++) remeshAll(g_world->setBlock(bx, 43, bz, BLOCK_GRASS));
+  }
+  g_player->position = Vec3(9.5, 44.0, 8.5);
+  lookAt(9.5, 43.5, 9.5);
+
+  g_inventory->mainHand = { ITEM_WOOD_HOE, 1 };
+  tryMine(); // till: real left-click-with-equipped-hoe path
+
+  g_hotbar->slots[0] = { ITEM_WHEAT, 5 };
+  g_hotbar->select(0);
+  lookAt(9.5, 43.5, 9.5);
+  tryPlantCrop(); // plant: real E-key path
+
+  g_player->position = Vec3(9.5, 44.0, 8.3); // close and level with the crop cell
+  lookAt(9.5, 44.3, 9.5);
+
+  const uint8_t stages[4] = { BLOCK_WHEAT_0, BLOCK_WHEAT_1, BLOCK_WHEAT_2, BLOCK_WHEAT_3 };
+  const char* names[4] = { "screenshot_crop_stage0.bmp", "screenshot_crop_stage1.bmp",
+                           "screenshot_crop_stage2.bmp", "screenshot_crop_stage3_mature.bmp" };
+  for (int s = 0; s < 4; s++) {
+    remeshAll(g_world->setBlock(9, 44, 9, stages[s]));
+    if (s < 3) {
+      g_world->cropTimers[{ 9, 44, 9 }] = 37.0; // arbitrary nonzero, just to populate the readout
+    } else {
+      g_world->cropTimers.erase({ 9, 44, 9 }); // mature: no timer, matches real end-of-growth state
+    }
+    for (int frame = 0; frame < 5; frame++) pump();
+    render();
+    captureFrame((exeDir() + names[s]).c_str());
+    SwapBuffers(g_dc);
+  }
+
+  teardownSession();
+  g_state = GameState::Menu;
+  return 0;
 }
 
 // End-to-end water tool test through the real click handlers (tryMine =
@@ -4267,7 +4756,11 @@ static int runSelftest() {
           for (int lx = 0; lx < CHUNK_SIZE; lx++) {
             for (int y = 1; y < CHUNK_HEIGHT - 1; y++) {
               uint8_t here = ch->getLocal(lx, y, lz);
-              if (!isPlant(here) || here == BLOCK_TALL_GRASS) continue;
+              // Crops satisfy isPlant() too (see isPlant, blocks.cpp) but
+              // aren't flowers and root on farmland, not grass — counting
+              // them here would both miscategorize them and spuriously trip
+              // wrongHost once wild farm patches exist in worldgen.
+              if (!isPlant(here) || here == BLOCK_TALL_GRASS || isCrop(here)) continue;
               flowerCount++;
               if (ch->getLocal(lx, y - 1, lz) != BLOCK_GRASS) wrongHost++;
               for (int k = 0; k < FLOWER_KIND_COUNT; k++) {
@@ -4284,6 +4777,48 @@ static int runSelftest() {
     if (!(flowerCount > 20 && wrongHost == 0 && allKinds)) {
       std::fprintf(f, "  (flowers=%d wrongHost=%d kinds=%d,%d,%d,%d)\n", flowerCount, wrongHost,
                    kindSeen[0], kindSeen[1], kindSeen[2], kindSeen[3]);
+    }
+  }
+
+  // Wild farm patches (see isFarmSite, worldgen.cpp): the game's only source
+  // of a wheat/carrot/potato seed item, since crops are otherwise
+  // harvest-only with no crafting recipe. Every crop cell must root on
+  // farmland, several patches must exist within an ordinary exploring
+  // range, and all 3 kinds plus some already-mature cells must turn up —
+  // otherwise a fresh world could leave a player with no legitimate way to
+  // ever obtain one.
+  {
+    int farmlandCount = 0, cropCount = 0, matureCount = 0, wrongRoot = 0;
+    bool kindSeen[CROP_KIND_COUNT] = {};
+    for (int ccx = -10; ccx <= 10; ccx++) {
+      for (int ccz = -10; ccz <= 10; ccz++) {
+        auto ch = generateChunk(ccx, ccz);
+        for (int lz = 0; lz < CHUNK_SIZE; lz++) {
+          for (int lx = 0; lx < CHUNK_SIZE; lx++) {
+            for (int y = 1; y < CHUNK_HEIGHT - 1; y++) {
+              uint8_t here = ch->getLocal(lx, y, lz);
+              if (here == BLOCK_FARMLAND) farmlandCount++;
+              if (!isCrop(here)) continue;
+              cropCount++;
+              if (isMatureCrop(here)) matureCount++;
+              if (ch->getLocal(lx, y - 1, lz) != BLOCK_FARMLAND) wrongRoot++;
+              for (int k = 0; k < CROP_KIND_COUNT; k++) {
+                if (here >= CROP_BASE_BLOCKS[k] && here < CROP_BASE_BLOCKS[k] + CROP_STAGE_COUNT) {
+                  kindSeen[k] = true;
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+    bool allKinds = true;
+    for (int k = 0; k < CROP_KIND_COUNT; k++) allKinds = allKinds && kindSeen[k];
+    bool ok = farmlandCount > 40 && cropCount > 15 && matureCount > 5 && wrongRoot == 0 && allKinds;
+    check(ok, "wild_farm_patches_present_and_harvestable");
+    if (!ok) {
+      std::fprintf(f, "  (farmland=%d crops=%d mature=%d wrongRoot=%d kinds=%d,%d,%d)\n", farmlandCount,
+                   cropCount, matureCount, wrongRoot, kindSeen[0], kindSeen[1], kindSeen[2]);
     }
   }
 
@@ -4533,6 +5068,40 @@ static int runSelftest() {
                    "  (recipe=%d count=%d power=%d equip=%d heldGeom=%d art=%d icon=%d)\n",
                    recipeOk, countOk, powerOk, equippable, sameHeldGeometryAsStoneSword, artSupplied,
                    iconIsTheArt);
+    }
+  }
+
+  // Spear: 1 stone + 2 sticks on the DIAGONAL (a straight column would be
+  // the stone shovel — same totals, different layout), stone-sword damage
+  // but double the reach, and a thrust (poke) rather than a slash.
+  {
+    uint8_t grid[9] = {};
+    grid[0] = BLOCK_STONE; grid[4] = ITEM_STICK; grid[8] = ITEM_STICK;
+    const Recipe* hit = findRecipe(grid);
+    bool recipeOk = hit && hit->output == ITEM_SPEAR && hit->outputCount == 1;
+    // Shaped recipes also match mirrored, and the mirror must not collide
+    // with any other recipe either.
+    uint8_t mgrid[9] = {};
+    mgrid[2] = BLOCK_STONE; mgrid[4] = ITEM_STICK; mgrid[6] = ITEM_STICK;
+    const Recipe* mhit = findRecipe(mgrid);
+    bool mirrorOk = mhit && mhit->output == ITEM_SPEAR;
+
+    bool powerOk = attackPower(ITEM_SPEAR) == 2.0;
+    bool reachOk = attackReach(ITEM_SPEAR) > attackReach(ITEM_SWORD) &&
+                   attackReach(ITEM_SWORD) == attackReach(ITEM_STONE_SWORD);
+    bool pokeOk = toolPokes(ITEM_SPEAR) && !toolPokes(ITEM_SWORD) &&
+                  !toolPokes(ITEM_STONE_SWORD);
+    bool equippable = isToolItem(ITEM_SPEAR);
+    const GeneratedSprite* sprite = generatedSpriteNamed("spear");
+    bool artSupplied = sprite && sprite->rgba;
+    bool tileOk = craftItemTile(ITEM_SPEAR) == TILE_SPEAR;
+
+    bool ok = recipeOk && mirrorOk && powerOk && reachOk && pokeOk && equippable &&
+              artSupplied && tileOk;
+    check(ok, "spear_craft_item");
+    if (!ok) {
+      std::fprintf(f, "  (recipe=%d mirror=%d power=%d reach=%d poke=%d equip=%d art=%d tile=%d)\n",
+                   recipeOk, mirrorOk, powerOk, reachOk, pokeOk, equippable, artSupplied, tileOk);
     }
   }
 
@@ -5424,6 +5993,11 @@ static int runSelftest() {
   auto isSprite = [&](int tile) {
     return tile == TILE_TALL_GRASS ||
            (tile >= TILE_FLOWER_POPPY && tile <= TILE_FLOWER_CORNFLOWER) ||
+           // Crop billboards (isPlant, blocks.h) — same transparent-field
+           // silhouette as tall grass/flowers, not a full-cube face. Farmland
+           // itself (TILE_FARMLAND_TOP, just before this range) is a solid
+           // block and correctly stays out of this check.
+           (tile >= TILE_WHEAT_SPROUT && tile <= TILE_POTATO_MATURE) ||
            tile >= TILE_FIRST_ITEM;
   };
   int spriteClear[TILE_COUNT] = {}, spriteSolid[TILE_COUNT] = {};
@@ -5490,6 +6064,153 @@ static int runSelftest() {
     }
   }
 
+  // Crops: pure stage-helper logic first (blocks.h, no world needed), then
+  // the full till/plant/grow/harvest/mine flow through the real click
+  // handlers and updateCropGrowth, on a real session (updateCropGrowth
+  // remeshes via g_world internally, so it needs one).
+  {
+    bool helpersOk = true;
+    const uint8_t bases[3] = { BLOCK_WHEAT_0, BLOCK_CARROT_0, BLOCK_POTATO_0 };
+    const int items[3] = { ITEM_WHEAT, ITEM_CARROT, ITEM_POTATO };
+    for (int k = 0; k < 3; k++) {
+      for (int s = 0; s < 4; s++) {
+        uint8_t id = (uint8_t)(bases[k] + s);
+        if (!isCrop(id)) helpersOk = false;
+        if (cropStage(id) != s) helpersOk = false;
+        if (cropItemFor(id) != items[k]) helpersOk = false;
+        bool shouldBeMature = (s == 3);
+        if (isMatureCrop(id) != shouldBeMature) helpersOk = false;
+        uint8_t next = nextCropStage(id);
+        if (shouldBeMature ? (next != id) : (next != id + 1)) helpersOk = false;
+      }
+      if (cropBaseBlockForItem((uint8_t)items[k]) != bases[k]) helpersOk = false;
+    }
+    if (isCrop(BLOCK_DIRT) || isCrop(BLOCK_AIR)) helpersOk = false;
+    if (cropBaseBlockForItem(ITEM_APPLE) >= 0) helpersOk = false;
+    check(helpersOk, "crop_stage_helpers");
+  }
+  {
+    SaveState fixedSeed;
+    fixedSeed.seed = 1337;
+    createSession(&fixedSeed);
+    g_state = GameState::Playing;
+    g_world->updateLoadedChunks(9, 9); // load the area this test builds on
+
+    auto lookAt = [&](double tx, double ty, double tz) {
+      Vec3 eye = g_player->eyePosition();
+      double dx = tx - eye.x, dy = ty - eye.y, dz = tz - eye.z;
+      double horiz = std::sqrt(dx * dx + dz * dz);
+      g_player->pitch = std::atan2(dy, horiz);
+      g_player->yaw = std::atan2(-dx, -dz);
+    };
+    auto countHeld = [&](int itemId) {
+      int n = 0;
+      for (const Hotbar::Slot& s : g_hotbar->slots) if (s.blockId == itemId) n += s.count;
+      return n;
+    };
+
+    for (int bx = 8; bx <= 11; bx++) {
+      for (int bz = 8; bz <= 11; bz++) g_world->setBlock(bx, 43, bz, BLOCK_GRASS);
+    }
+    g_player->position = Vec3(9.5, 44.0, 8.5); // standing on the block at (9,43,8)
+    lookAt(9.5, 43.5, 9.5);                    // the grass block one cell ahead
+
+    g_inventory->mainHand = { ITEM_WOOD_HOE, 1 }; // equipped, not hotbar-selected
+    tryMine();
+    check(g_world->getBlock(9, 43, 9) == BLOCK_FARMLAND, "till_soil");
+
+    g_hotbar->slots[1] = { ITEM_WHEAT, 3 };
+    g_hotbar->select(1);
+    lookAt(9.5, 43.5, 9.5); // still the same cell, now farmland
+
+    // Right-click no longer plants: planting moved to E (matching harvest,
+    // which is also E, not left-click), so aiming at farmland and
+    // right-clicking a crop item now just eats it, same as any other food.
+    g_player->hunger = 10; // not full, or tryEatSelected would refuse and this wouldn't prove anything
+    int wheatBeforeEat = countHeld(ITEM_WHEAT);
+    tryPlace();
+    bool rightClickEatsNotPlants = g_world->getBlock(9, 44, 9) == BLOCK_AIR &&
+                                   countHeld(ITEM_WHEAT) == wheatBeforeEat - 1;
+    check(rightClickEatsNotPlants, "right_click_eats_crop_not_plants");
+
+    g_hotbar->slots[1] = { ITEM_WHEAT, 2 };
+    g_hotbar->select(1);
+    int wheatBefore = countHeld(ITEM_WHEAT);
+    tryPlantCrop(); // the E-key path (WM_KEYDOWN's BLOCK_FARMLAND branch calls this directly)
+    bool plantOk = g_world->getBlock(9, 44, 9) == BLOCK_WHEAT_0 &&
+                   countHeld(ITEM_WHEAT) == wheatBefore - 1 && g_world->cropTimers.count({ 9, 44, 9 }) == 1;
+    check(plantOk, "plant_crop");
+
+    // Drive the same crop through updateCropGrowth with its timer forced
+    // low before each tick (real growth takes 40-80s, too slow to wait out
+    // here), confirming it advances exactly one stage per expiry and clears
+    // the timer once mature.
+    bool growthOk = true;
+    for (int expectedStage = 1; expectedStage <= 3; expectedStage++) {
+      g_world->cropTimers[{ 9, 44, 9 }] = 0.5;
+      updateCropGrowth(1.0);
+      if (cropStage(g_world->getBlock(9, 44, 9)) != expectedStage) growthOk = false;
+    }
+    if (g_world->cropTimers.count({ 9, 44, 9 }) != 0) growthOk = false; // mature: nothing left to time
+    check(growthOk && g_world->getBlock(9, 44, 9) == BLOCK_WHEAT_3, "crop_growth_ticks_through_stages");
+
+    // Now mature, mine it and confirm the item comes back and the cell
+    // clears to air (farmland exposed underneath).
+    lookAt(9.5, 44.5, 9.5);
+    int wheatBeforeMine = countHeld(ITEM_WHEAT);
+    tryMine();
+    bool matureMineOk = g_world->getBlock(9, 44, 9) == BLOCK_AIR &&
+                        countHeld(ITEM_WHEAT) == wheatBeforeMine + 1 &&
+                        g_world->cropTimers.count({ 9, 44, 9 }) == 0;
+    check(matureMineOk, "mine_mature_crop_drops_item");
+
+    // Same cell, immature this time: clears, but grants nothing.
+    g_world->setBlock(9, 44, 9, BLOCK_CARROT_0);
+    lookAt(9.5, 44.5, 9.5);
+    int carrotBeforeMine = countHeld(ITEM_CARROT);
+    tryMine();
+    bool immatureMineOk = g_world->getBlock(9, 44, 9) == BLOCK_AIR && countHeld(ITEM_CARROT) == carrotBeforeMine;
+    check(immatureMineOk, "mine_immature_crop_drops_nothing");
+
+    // E-harvest: the standalone path (main.cpp's harvestCrop) the E-key
+    // dispatch actually calls, not tryMine.
+    g_world->setBlock(9, 44, 9, BLOCK_POTATO_3);
+    g_world->cropTimers[{ 9, 44, 9 }] = 5.0;
+    int potatoBefore = countHeld(ITEM_POTATO);
+    harvestCrop(9, 44, 9, BLOCK_POTATO_3);
+    bool harvestOk = g_world->getBlock(9, 44, 9) == BLOCK_AIR && countHeld(ITEM_POTATO) == potatoBefore + 1 &&
+                     g_world->cropTimers.count({ 9, 44, 9 }) == 0;
+    check(harvestOk, "harvest_mature_crop");
+
+    teardownSession();
+    g_state = GameState::Menu;
+  }
+
+  // Day/night: dayNightState()'s color/darkness ramp at a few reference
+  // points, and a save/load round-trip for g_timeOfDay.
+  {
+    double r, g, b, dark;
+    dayNightState(0.5, r, g, b, dark); // noon: full day color, no darkening
+    bool noonOk = dark < 0.05 && std::fabs(r - SKY_R) < 0.01 && std::fabs(g - SKY_G) < 0.01 &&
+                  std::fabs(b - SKY_B) < 0.01;
+    dayNightState(0.0, r, g, b, dark); // midnight: dark and noticeably tinted
+    bool midnightOk = dark > 0.7 && r < 0.1 && g < 0.1 && b < 0.2;
+    double r2, g2, b2, dark2;
+    dayNightState(1.02, r, g, b, dark);   // wraps cleanly past 1.0...
+    dayNightState(0.02, r2, g2, b2, dark2); // ...to read the same as just past 0.0
+    bool wrapOk = std::fabs(dark - dark2) < 0.01;
+    check(noonOk && midnightOk && wrapOk, "day_night_color_cycle");
+  }
+  {
+    SaveState s;
+    s.timeOfDay = 0.6789;
+    saveGame(s, "selftest_timeofday");
+    SaveState loaded;
+    bool loadedOk = loadGame(loaded, "selftest_timeofday") && std::fabs(loaded.timeOfDay - 0.6789) < 1e-6;
+    check(loadedOk, "time_of_day_save_roundtrip");
+    DeleteFileA((exeDir() + "saves\\selftest_timeofday.txt").c_str());
+  }
+
   std::fprintf(f, "%s\n", failures == 0 ? "ALL_PASS" : "HAS_FAILURES");
   std::fclose(f);
   return failures == 0 ? 0 : 1;
@@ -5500,6 +6221,7 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR lpCmdLine, int) {
   bool screenshotMode = std::strstr(lpCmdLine, "--screenshot") != nullptr;
   bool selftestMode = std::strstr(lpCmdLine, "--selftest") != nullptr;
   bool waterTestMode = std::strstr(lpCmdLine, "--watertest") != nullptr;
+  bool cropTestMode = std::strstr(lpCmdLine, "--croptest") != nullptr;
   const char* mapDumpArg = std::strstr(lpCmdLine, "--mapdump");
   if (mapDumpArg) {
     uint32_t seed = 1337;
@@ -5562,10 +6284,12 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR lpCmdLine, int) {
   }
   g_menu.showPanel(MenuPanel::Main);
 
-  if (screenshotMode || waterTestMode) {
+  if (screenshotMode || waterTestMode || cropTestMode) {
     int code;
     if (waterTestMode) {
       code = runWaterTest();
+    } else if (cropTestMode) {
+      code = runCropTestMode();
     } else {
       std::string out = exeDir() + "screenshot.bmp";
       code = runScreenshotMode(out.c_str());

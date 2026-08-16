@@ -28,6 +28,12 @@ struct PlayerAnim {
   // rowing (the boat's own forward/back input), frozen while just sitting.
   bool boating = false;
   double rowPhase = 0;
+
+  // Swimming (touching water — Player::swimming): advances continuously
+  // while swimming (not gated on ground contact the way walkPhase is, since
+  // a swimmer is rarely onGround), driving a slow alternating kick/stroke
+  // instead of the static tipped-over pose a frozen phase would give.
+  double swimPhase = 0;
 };
 
 // Draws the character at the player's position, facing the player's yaw.

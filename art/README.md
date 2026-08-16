@@ -21,14 +21,20 @@ here needs to be distributed with it.
   (nearest) or smears it (averaging).
 - **Leave the background transparent.** Alpha is preserved, so the inventory
   slot shows through around the item.
-- **This changes the slot icon only.** The tool you hold in 3D is separate
-  geometry in `src\tools.cpp` (`drawHead`); it is not built from this image.
+- **This changes the slot icon AND, for equippable tools, the held 3D
+  model** — a tool with art here is held as the drawing itself, voxel-
+  extruded (`spriteToolVoxelList` in `src\tools.cpp`), not the generic
+  per-shape box geometry.
+- **Draw handheld art VERTICALLY, grip at the bottom-center.** The bottom
+  row of the tile is what the hand grips, and the shared tilt/yaw assumes a
+  straight vertical shaft (see `art\sword.png`). A diagonal icon-style
+  drawing leaves the hand grabbing empty air and the tool tilted wrong.
 - **The filename picks the tile.** `art\axe.png` replaces the tile named
   `"axe"`. The name-to-tile mapping is `spriteNameForTile()` in
   `src\textures.cpp`; a PNG whose name matches no tile is ignored.
 
-Currently replaceable: `axe`, `pickaxe`. Adding another is one line in
-`spriteNameForTile()`.
+Currently replaceable: `sword`, `power_axe`, `spear`. Adding another is one
+line in `spriteNameForTile()`.
 
 Delete a PNG and re-run the converter to go back to the procedural drawing —
 the two coexist per tile, so replacing one item leaves the rest alone.

@@ -47,7 +47,7 @@ inline constexpr int DISPLAY_MODE_COUNT = 2;
 inline constexpr const char* CHARACTER_LABELS[] = { "Steve", "Alex" };
 inline constexpr int CHARACTER_COUNT = 2;
 
-enum class MenuPanel { Main, Pause, SettingsPanel, SaveGamePanel, LoadGamePanel, ConfirmPanel };
+enum class MenuPanel { Main, Pause, Dead, SettingsPanel, SaveGamePanel, LoadGamePanel, ConfirmPanel };
 
 class Menu {
 public:
@@ -75,8 +75,10 @@ public:
   void showPanel(MenuPanel p);
   void hide() { visible = false; }
   // Sub-panels (settings/save/load) close back to previousPanel on ESC.
+  // Dead behaves like Pause here — a top-level screen with nothing to close
+  // back to, not something ESC should back out of.
   bool isSubPanel() const {
-    return visible && panel != MenuPanel::Main && panel != MenuPanel::Pause;
+    return visible && panel != MenuPanel::Main && panel != MenuPanel::Pause && panel != MenuPanel::Dead;
   }
   // `saves` lets the panel list existing slots so one can be picked to
   // overwrite, same list the load panel already shows.

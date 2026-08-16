@@ -53,6 +53,38 @@ const uint32_t POTION_GLASS = 0xdfeef7, POTION_GLASS_D = 0xb8d4e6;
 const uint32_t POTION_HI = 0xff5b52, POTION_HI_D = 0xe0362c;
 const uint32_t POTION_RED = 0xd81f28, POTION_RED_D = 0x9c1418;
 const uint32_t POTION_DARK = 0x8f1014, POTION_DARK_D = 0x600a0d;
+// Fish palettes, each lifted straight from that species' own 3D model colors
+// in fish.cpp (COD_SHAPE/SALMON_SHAPE/pufferfish/TROPICAL_PALETTES[0]) so the
+// inventory icon and the swimming fish always agree.
+const uint32_t FISH_COD_BODY = 0x6b573d, FISH_COD_BODY_D = 0x4a3c2a;
+const uint32_t FISH_COD_HI = 0xb29e80, FISH_COD_HI_D = 0x8f7d66;
+const uint32_t FISH_COD_DARK = 0x473324, FISH_COD_DARK_D = 0x2e2118;
+const uint32_t FISH_SALMON_BODY = 0xa84742, FISH_SALMON_BODY_D = 0x7c332f;
+const uint32_t FISH_SALMON_HI = 0xccbdad, FISH_SALMON_HI_D = 0xa89880;
+const uint32_t FISH_SALMON_DARK = 0x663329, FISH_SALMON_DARK_D = 0x44211a;
+const uint32_t FISH_PUFFER_BODY = 0xc78f33, FISH_PUFFER_BODY_D = 0x9c701f;
+const uint32_t FISH_PUFFER_HI = 0xdbcc9e, FISH_PUFFER_HI_D = 0xb8a97a;
+const uint32_t FISH_PUFFER_SPIKE = 0x8c8529, FISH_PUFFER_SPIKE_D = 0x655f1c;
+const uint32_t FISH_TROPICAL_BODY = 0xe6731a, FISH_TROPICAL_BODY_D = 0xb85913;
+const uint32_t FISH_TROPICAL_HI = 0xf5934a, FISH_TROPICAL_HI_D = 0xe6731a;
+const uint32_t FISH_TROPICAL_BAND = 0xf2f2eb, FISH_TROPICAL_BAND_D = 0xd0d0c4;
+const uint32_t FISH_TROPICAL_DARK = 0x8a4310, FISH_TROPICAL_DARK_D = 0x5c2c0a;
+const uint32_t FISH_SHARK_BODY = 0x5c6066, FISH_SHARK_BODY_D = 0x3e4145;
+const uint32_t FISH_SHARK_HI = 0x8f949c, FISH_SHARK_HI_D = 0x6f747a;
+const uint32_t FISH_SHARK_DARK = 0x2e3033, FISH_SHARK_DARK_D = 0x1c1d1f;
+// Cooked fish: the same COD_ROWS silhouette, browned like cooked meat
+// instead of any one species' raw color, since every raw fish cooks into
+// this one shared item (recipes.h's cookedItemFor).
+const uint32_t FISH_COOKED_BODY = 0x9a6a3a, FISH_COOKED_BODY_D = 0x6e4a24;
+const uint32_t FISH_COOKED_HI = 0xc99a5c, FISH_COOKED_HI_D = 0xa06a3a;
+const uint32_t FISH_COOKED_DARK = 0x5a3a1c, FISH_COOKED_DARK_D = 0x3a2410;
+// Crop palettes.
+const uint32_t WHEAT_HEAD = 0xe8c53a, WHEAT_HEAD_D = 0xc79f1e;
+const uint32_t WHEAT_STALK = 0xc9a227, WHEAT_STALK_D = 0x9c7a18;
+const uint32_t CARROT_ORANGE = 0xe8791e, CARROT_ORANGE_D = 0xb85913;
+const uint32_t CARROT_ORANGE_DARK = 0x8f4a10, CARROT_ORANGE_DARK_D = 0x6e3a0c;
+const uint32_t POTATO_BASE = 0xa67c4a, POTATO_BASE_D = 0x7a5230;
+const uint32_t POTATO_HI = 0xc9a06a, POTATO_HI_D = 0xa67c4a;
 
 // --- tool shapes -----------------------------------------------------------
 // 'H' head / business end, 'S' shaft. Shared between material tiers: a wooden
@@ -513,27 +545,27 @@ const char* const CAMPFIRE_ROWS[TILE_PX] = {
 };
 
 // A meat haunch on a bone, matching the HUD's drumstick icon (main.cpp's
-// drawDrumstickIcon, traced from vanilla): a rounded meat blob — highlight
-// top-left, darker shade bottom-right — with a white bone sticking out of
-// its lower-right corner, tipped with a shine pixel. Shared silhouette for
-// raw and cooked; the palettes do the telling apart (pink raw vs browned
-// cooked), per the request that they be "easy to spot" apart.
+// drawDrumstickIcon, traced from vanilla): a big rounded meat blob —
+// highlight top-left, darker shade bottom-right — with a knobby-ended bone
+// sticking out of its lower-right corner, tipped with a shine pixel. Shared
+// silhouette for raw and cooked; the palettes do the telling apart (pink raw
+// vs browned cooked), per the request that they be "easy to spot" apart.
 const char* const DRUMSTICK_ROWS[TILE_PX] = {
   "................",
-  "................",
-  "....HHMMM.......",
-  "..HHHMMMMM......",
-  ".HHHMMMMMMM.....",
-  ".HHMMMMMMMM.....",
-  ".HMMMMMMMMMD....",
-  ".MMMMMMMMMDD....",
-  ".MMMMMMMMMDD....",
-  "..MMMMMMMDDD....",
-  "...MMMMDDDDBB...",
-  "....MMDD....BB..",
-  ".....DD.....BB..",
-  "...........BWB..",
-  "...........BBB..",
+  "...HHHH.........",
+  "..HHHHHMM.......",
+  ".HHHHHMMMM......",
+  ".HHHHMMMMM......",
+  ".HHHMMMMMDD.....",
+  ".HHMMMMMDDD.....",
+  "..MMMMMDDDD.....",
+  "..MMMMDDDDD.....",
+  "...MMDDDDDD.....",
+  ".....DDDDDB.....",
+  ".........BBBBB..",
+  "..........BBWB..",
+  "..........BBB...",
+  "...........B....",
   "................",
 };
 
@@ -691,6 +723,187 @@ const char* const POTION_BIG_ROWS[TILE_PX] = {
   "....GDDDDDDG....",
   ".....GDDDDG.....",
   "......GGGG......",
+  "................",
+  "................",
+};
+
+// Side-profile fish: dorsal fin ('F'), an elongated body ('H' top highlight,
+// 'M' body, 'D' belly/tail shade), a dark eye ('E') near the head. Shared
+// base shape for cod; salmon reuses it with a forked-tail notch, tropical
+// fish gets its own shorter/banded variant, pufferfish is round instead (see
+// below) — the same "shared shape, different silhouette per kind" approach
+// the fruit sprites use.
+const char* const COD_ROWS[TILE_PX] = {
+  "................",
+  "................",
+  ".......FF.......",
+  "......FFFF......",
+  ".....HHMMMMMM...",
+  "....HHMMMMMMMMDD",
+  "...EHMMMMMMMMDDD",
+  "....HMMMMMMMMDDD",
+  "....HHMMMMMMMMDD",
+  ".....HHMMMMMM...",
+  "......DDDDDD....",
+  "................",
+  "................",
+  "................",
+  "................",
+  "................",
+};
+
+// Same body as COD_ROWS, but the tail carries a gap (col 14, rows 6-7)
+// splitting it into two prongs — the forked tail salmon actually swims with
+// (fish.cpp's SALMON_SHAPE.forkedTail).
+const char* const SALMON_ROWS[TILE_PX] = {
+  "................",
+  "................",
+  ".......FF.......",
+  "......FFFF......",
+  ".....HHMMMMMM...",
+  "....HHMMMMMMMMDD",
+  "...EHMMMMMMMMD.D",
+  "....HMMMMMMMMD.D",
+  "....HHMMMMMMMMDD",
+  ".....HHMMMMMM...",
+  "......DDDDDD....",
+  "................",
+  "................",
+  "................",
+  "................",
+  "................",
+};
+
+// Shorter and rounder than the cod/salmon shape, with a bright vertical
+// band ('N') through the middle standing in for the clownfish stripe
+// (TROPICAL_PALETTES[0] in fish.cpp) — no dedicated fin color, the dorsal
+// fin reuses the body tone to stay within the 5-color palette limit.
+const char* const TROPICAL_FISH_ROWS[TILE_PX] = {
+  "................",
+  "................",
+  "......MMMM......",
+  ".....MMMMMM.....",
+  "....HHMMNNMMDD..",
+  "...EHMMMNNMMMDDD",
+  "....HMMMNNMMMDDD",
+  "....HHMMNNMMDD..",
+  "......DDDDDD....",
+  "................",
+  "................",
+  "................",
+  "................",
+  "................",
+  "................",
+  "................",
+};
+
+// Same base body as COD_ROWS, but a taller/wider dorsal fin (rows 1-3
+// instead of 2-3) — the icon-scale stand-in for the shark's much bigger
+// triangular fin — paired with a gray palette instead of tan.
+const char* const SHARK_ROWS[TILE_PX] = {
+  "................",
+  "........F.......",
+  ".......FFF......",
+  "......FFFFF.....",
+  ".....HHMMMMMM...",
+  "....HHMMMMMMMMDD",
+  "...EHMMMMMMMMDDD",
+  "....HMMMMMMMMDDD",
+  "....HHMMMMMMMMDD",
+  ".....HHMMMMMM...",
+  "......DDDDDD....",
+  "................",
+  "................",
+  "................",
+  "................",
+  "................",
+};
+
+// A bundled sheaf: three golden stalks each capped with a small grain-head
+// cluster, gathered and tied with a dark band a little below the middle —
+// the "harvested wheat" silhouette, distinct from a single fruit's round
+// shape.
+const char* const WHEAT_ROWS[TILE_PX] = {
+  "................",
+  ".....H..HH..H...",
+  ".....H..HH..H...",
+  ".....M..MM..M...",
+  ".....M..MM..M...",
+  ".....M..MM..M...",
+  ".....M..MM..M...",
+  ".....M..MM..M...",
+  ".....M..MM..M...",
+  ".....M..MM..M...",
+  ".....DDDDDDDD...",
+  "......MMMM......",
+  "......MMMM......",
+  ".......MM.......",
+  ".......MM.......",
+  "................",
+};
+
+// A leafy green top over a tapering orange root — the familiar carrot
+// silhouette, root pointing straight down.
+const char* const CARROT_ROWS[TILE_PX] = {
+  "................",
+  ".....L.L.L......",
+  ".....LLLLL......",
+  "......LLL.......",
+  ".....HHMMMDD....",
+  "......HMMMD.....",
+  "......HMMMD.....",
+  ".......HMD......",
+  ".......HMD......",
+  "........MD......",
+  "........MD......",
+  "........M.......",
+  "........M.......",
+  "................",
+  "................",
+  "................",
+};
+
+// A lumpy tan-brown tuber with a couple of small dark "eyes" — round rather
+// than tapering, the give-away that separates it from the carrot at a
+// glance despite the similar earthy coloring.
+const char* const POTATO_ROWS[TILE_PX] = {
+  "................",
+  "................",
+  "......MMMM......",
+  ".....MMMMMM.....",
+  "....MMHMMMMDD...",
+  "...MMMMMMMMMDD..",
+  "...MMMMEMMMMDD..",
+  "...MMMMMMMMMDD..",
+  "....MMMMMMMDD...",
+  ".....MMMMMDD....",
+  "......MMMDD.....",
+  "................",
+  "................",
+  "................",
+  "................",
+  "................",
+};
+
+// Round body instead of elongated, with spikes ('P') at top/bottom/left/
+// right the way the puffed-up reference render (Pufferfish_large_JE1.gif)
+// bristles all over — the one fish shape that isn't a side-profile "swimming
+// fish" silhouette, matching how differently it actually swims and looks.
+const char* const PUFFERFISH_ROWS[TILE_PX] = {
+  "................",
+  "........P.......",
+  ".......HHH......",
+  "......HHMMMH....",
+  ".....HMMMMMMD...",
+  "....PMMMEMMMDP..",
+  "....PMMMMMMMDP..",
+  ".....DMMMMMMD...",
+  "......DDDDD.....",
+  ".......DDD......",
+  "........P.......",
+  "................",
+  "................",
+  "................",
   "................",
   "................",
 };
@@ -933,6 +1146,53 @@ const ItemArt ART_POTION_BIG = {
                      { 'D', POTION_DARK, POTION_DARK_D } }
 };
 
+const ItemArt ART_RAW_COD = {
+  COD_ROWS, { { 'F', FISH_COD_HI, FISH_COD_HI_D }, { 'H', FISH_COD_HI, FISH_COD_HI_D },
+             { 'M', FISH_COD_BODY, FISH_COD_BODY_D }, { 'D', FISH_COD_DARK, FISH_COD_DARK_D },
+             { 'E', SHADOW, SHADOW_D } }
+};
+const ItemArt ART_RAW_SALMON = {
+  SALMON_ROWS, { { 'F', FISH_SALMON_HI, FISH_SALMON_HI_D }, { 'H', FISH_SALMON_HI, FISH_SALMON_HI_D },
+                { 'M', FISH_SALMON_BODY, FISH_SALMON_BODY_D },
+                { 'D', FISH_SALMON_DARK, FISH_SALMON_DARK_D }, { 'E', SHADOW, SHADOW_D } }
+};
+const ItemArt ART_RAW_PUFFERFISH = {
+  PUFFERFISH_ROWS, { { 'P', FISH_PUFFER_SPIKE, FISH_PUFFER_SPIKE_D },
+                     { 'H', FISH_PUFFER_HI, FISH_PUFFER_HI_D },
+                     { 'M', FISH_PUFFER_BODY, FISH_PUFFER_BODY_D },
+                     { 'D', FISH_PUFFER_HI_D, FISH_PUFFER_BODY_D }, { 'E', SHADOW, SHADOW_D } }
+};
+const ItemArt ART_RAW_TROPICAL_FISH = {
+  TROPICAL_FISH_ROWS, { { 'H', FISH_TROPICAL_HI, FISH_TROPICAL_HI_D },
+                        { 'M', FISH_TROPICAL_BODY, FISH_TROPICAL_BODY_D },
+                        { 'N', FISH_TROPICAL_BAND, FISH_TROPICAL_BAND_D },
+                        { 'D', FISH_TROPICAL_DARK, FISH_TROPICAL_DARK_D }, { 'E', SHADOW, SHADOW_D } }
+};
+const ItemArt ART_RAW_SHARK = {
+  SHARK_ROWS, { { 'F', FISH_SHARK_HI, FISH_SHARK_HI_D }, { 'H', FISH_SHARK_HI, FISH_SHARK_HI_D },
+               { 'M', FISH_SHARK_BODY, FISH_SHARK_BODY_D }, { 'D', FISH_SHARK_DARK, FISH_SHARK_DARK_D },
+               { 'E', SHADOW, SHADOW_D } }
+};
+const ItemArt ART_COOKED_FISH = {
+  COD_ROWS, { { 'F', FISH_COOKED_HI, FISH_COOKED_HI_D }, { 'H', FISH_COOKED_HI, FISH_COOKED_HI_D },
+             { 'M', FISH_COOKED_BODY, FISH_COOKED_BODY_D }, { 'D', FISH_COOKED_DARK, FISH_COOKED_DARK_D },
+             { 'E', SHADOW, SHADOW_D } }
+};
+
+const ItemArt ART_WHEAT = {
+  WHEAT_ROWS, { { 'H', WHEAT_HEAD, WHEAT_HEAD_D }, { 'M', WHEAT_STALK, WHEAT_STALK_D },
+               { 'D', DARKWOOD, DARKWOOD_D } }
+};
+const ItemArt ART_CARROT = {
+  CARROT_ROWS, { { 'L', LEAF_GREEN, LEAF_GREEN_D }, { 'H', ORANGE_HI, ORANGE_HI_D },
+                { 'M', CARROT_ORANGE, CARROT_ORANGE_D },
+                { 'D', CARROT_ORANGE_DARK, CARROT_ORANGE_DARK_D } }
+};
+const ItemArt ART_POTATO = {
+  POTATO_ROWS, { { 'H', POTATO_HI, POTATO_HI_D }, { 'M', POTATO_BASE, POTATO_BASE_D },
+                { 'D', POTATO_BASE_D, 0x5c3c20 }, { 'E', SHADOW, SHADOW_D } }
+};
+
 // World textures for the placed blocks.
 const ItemArt BLK_PLANKS = { BLK_PLANKS_ROWS, { { 'M', WOOD, WOOD_D }, { 'D', DARKWOOD, DARKWOOD_D } } };
 const ItemArt BLK_BRICKS = { BLK_BRICKS_ROWS, { { 'M', STONE, STONE_D }, { 'D', 0x6f6f73, 0x4f4f53 } } };
@@ -1014,6 +1274,15 @@ const ItemArt* itemArtForTile(int tile) {
     case TILE_ORANGE: return &ART_ORANGE;
     case TILE_POTION_SMALL: return &ART_POTION_SMALL;
     case TILE_POTION_BIG: return &ART_POTION_BIG;
+    case TILE_RAW_COD: return &ART_RAW_COD;
+    case TILE_RAW_SALMON: return &ART_RAW_SALMON;
+    case TILE_RAW_PUFFERFISH: return &ART_RAW_PUFFERFISH;
+    case TILE_RAW_TROPICAL_FISH: return &ART_RAW_TROPICAL_FISH;
+    case TILE_RAW_SHARK: return &ART_RAW_SHARK;
+    case TILE_COOKED_FISH: return &ART_COOKED_FISH;
+    case TILE_WHEAT: return &ART_WHEAT;
+    case TILE_CARROT: return &ART_CARROT;
+    case TILE_POTATO: return &ART_POTATO;
     case TILE_WOOD_PICKAXE: return &ART_WOOD_PICKAXE;
     case TILE_STONE_PICKAXE: return &ART_STONE_PICKAXE;
     case TILE_WOOD_AXE: return &ART_WOOD_AXE;

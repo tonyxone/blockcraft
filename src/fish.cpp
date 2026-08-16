@@ -2,6 +2,7 @@
 #include "blocks.h"
 #include "constants.h"
 #include "noise.h"
+#include "recipes.h"
 #include "win_gl.h"
 #include "world.h"
 #include "worldgen.h"
@@ -196,31 +197,136 @@ void drawPufferfish(double puffAmount) {
   }
 }
 
+// Shark: the one real predator in open water. Researched against the
+// familiar open-ocean silhouette rather than any one reference render —
+// countershading (dark gray back, pale belly, the same belly-band trick the
+// other fish use), a pointed snout, gill slits, a tall triangular dorsal
+// fin, and an asymmetric (heterocercal) tail with a bigger upper lobe than
+// lower — the tail is what most separates a shark's outline from every
+// other fish's even wedge/fork here.
+void drawShark(double animPhase) {
+  const double bodyLen = 1.3, bodyWid = 0.32, bodyHt = 0.36;
+  double hl = bodyLen / 2, hw = bodyWid / 2, hh = bodyHt / 2;
+  double topR = 0.42, topG = 0.44, topB = 0.47;
+  double bellyR = 0.78, bellyG = 0.80, bellyB = 0.82;
+  double finR = 0.34, finG = 0.36, finB = 0.39;
+
+  // body
+  drawBox(-hw, -hh, -hl, bodyWid, bodyHt, bodyLen, topR, topG, topB);
+  // pale countershaded belly
+  drawBox(-hw - 0.006, -hh - 0.006, -hl + 0.03, bodyWid + 0.012, bodyHt * 0.34, bodyLen - 0.06,
+          bellyR, bellyG, bellyB);
+  // pointed snout capping the front
+  drawBox(-hw * 0.5, -hh * 0.3, -hl - 0.10, hw, hh * 0.6, 0.10, topR, topG, topB);
+  // gill slits: three thin dark bars on each side, just behind the head
+  for (int side = -1; side <= 1; side += 2) {
+    for (int i = 0; i < 3; i++) {
+      drawBox(side * (hw + 0.002), -hh * 0.5, -hl * 0.55 + i * 0.07, side * 0.01, hh * 0.7, 0.03,
+              0.10, 0.10, 0.12);
+    }
+  }
+  // eye
+  drawBox(hw - bodyWid * 0.1, hh * 0.15, -hl - 0.02, bodyWid * 0.12, bodyWid * 0.12, 0.02, 0.04,
+          0.04, 0.05);
+  // pectoral fins
+  for (int side = -1; side <= 1; side += 2) {
+    glPushMatrix();
+    glTranslated(side * hw, -hh * 0.1, -hl * 0.5);
+    glRotated(side * 30, 0, 0, 1);
+    drawBox(0, -bodyHt * 0.5, -bodyLen * 0.1, side * bodyWid * 0.7, bodyHt * 0.5, bodyLen * 0.22,
+            finR, finG, finB);
+    glPopMatrix();
+  }
+  // tall triangular dorsal fin
+  drawBox(-bodyWid * 0.08, hh, -bodyLen * 0.08, bodyWid * 0.16, bodyHt * 1.3, bodyLen * 0.30,
+          finR, finG, finB);
+  // heterocercal tail: upper lobe taller than the lower, both wagging
+  glPushMatrix();
+  glTranslated(0, 0, hl);
+  glRotated(std::sin(animPhase) * 18.0, 0, 1, 0);
+  drawBox(-bodyWid * 0.1, 0, 0, bodyWid * 0.2, bodyHt * 1.6, bodyLen * 0.26, finR, finG, finB);
+  drawBox(-bodyWid * 0.08, -bodyHt * 0.6, 0, bodyWid * 0.16, bodyHt * 0.5, bodyLen * 0.16, finR,
+          finG, finB);
+  glPopMatrix();
+}
+
 } // namespace
 
+// Sizes doubled across the board (minScale/maxScale) so fish read clearly at
+// a glance instead of blending into the water — same relative spread within
+// each species, just twice as large.
 const FishSpeciesDef FISH_SPECIES[FISH_SPECIES_COUNT] = {
-  //                    name        weight  minScale maxScale minSpeed maxSpeed
-  /* COD        */ { "cod",           3.0,  0.55,    1.60,    0.7,     1.1 },
-  /* SALMON     */ { "salmon",        2.0,  0.60,    1.80,    1.0,     1.6 },
-  /* PUFFERFISH */ { "pufferfish",    1.5,  0.60,    1.50,    0.5,     0.8 },
-  /* TROPICAL   */ { "tropical fish", 3.5,  0.45,    1.40,    0.9,     1.5 },
+  //                    name        weight  minScale maxScale minSpeed maxSpeed maxHealth halfLen halfWid halfHt attackPower
+  /* COD        */ { "cod",           3.0,   1.10,   3.20,    0.7,     1.1,     3,        0.25,   0.08,   0.09,  0 },
+  /* SALMON     */ { "salmon",        2.0,   1.20,   3.60,    1.0,     1.6,     3,        0.30,   0.09,   0.10,  0 },
+  /* PUFFERFISH */ { "pufferfish",    1.5,   1.20,   3.00,    0.5,     0.8,     4,        0.10,   0.10,   0.08,  0 },
+  /* TROPICAL   */ { "tropical fish", 3.5,   0.90,   2.80,    0.9,     1.5,     2,        0.12,   0.045,  0.07,  0 },
+  // Rare (tiny spawnWeight) and gated to real open water (maintainFishSpawns'
+  // extra big-water check below) — much bigger scale range, far more health,
+  // fastest swimmer, and the only species with a nonzero attackPower.
+  /* SHARK      */ { "shark",         0.08,  4.0,    6.0,     1.6,     2.4,     20,       0.65,   0.16,   0.18,  3.5 },
 };
 
+// Slow/fast swim-phase ranges: a fish alternates between a slow drift and a
+// fast dart, each bout lasting a random duration, so schools don't all speed
+// up and slow down in lockstep.
+const double SLOW_PHASE_MIN_DURATION = 3.0, SLOW_PHASE_MAX_DURATION = 6.0;
+const double FAST_PHASE_MIN_DURATION = 6.0, FAST_PHASE_MAX_DURATION = 12.0;
+const double SLOW_PHASE_MIN_MULT = 0.4, SLOW_PHASE_MAX_MULT = 0.7;
+const double FAST_PHASE_MIN_MULT = 1.3, FAST_PHASE_MAX_MULT = 2.0;
+
 void updateFish(Fish& f, World& world, double dt, const Vec3& playerPos) {
+  // A dying fish just lies where it died — main.cpp counts its deathTimer
+  // down and removes it once that's over; no AI, same as Animal::dying.
+  if (f.dying) return;
+
   const double SWIM_SPEED = 0.6;
   const double TURN_SPEED = 1.4;
+  const double PROVOKED_SPEED_MULT = 1.6; // a chasing shark is urgent, not ambient
+  const double LUNGE_SPEED_MULT = 3.0;    // the charge itself, well past the chase speed
 
-  f.wanderTimer -= dt;
-  if (f.wanderTimer <= 0) {
-    f.targetYaw = g_fishRng.next() * 2 * PI;
-    f.targetPitch = (g_fishRng.next() - 0.5) * 0.9; // gentle up/down bias, radians
-    f.wanderTimer = 2.5 + g_fishRng.next() * 3.5;
+  if (f.provoked) {
+    f.provokedTimer -= dt;
+    if (f.provokedTimer <= 0) f.provoked = false;
+  }
+  if (f.attackLungeTimer > 0) f.attackLungeTimer = std::max(0.0, f.attackLungeTimer - dt);
+
+  if (f.provoked && f.species == FISH_SHARK) {
+    // Chase: aim straight at the player instead of picking a random
+    // heading, and keep re-aiming every tick rather than drifting off
+    // target on a multi-second wander timer.
+    double dx = playerPos.x - f.position.x, dy = playerPos.y - f.position.y,
+           dz = playerPos.z - f.position.z;
+    double horizDist = std::hypot(dx, dz);
+    f.targetYaw = std::atan2(-dx, -dz);
+    f.targetPitch = clampd(std::atan2(dy, std::max(0.01, horizDist)), -0.9, 0.9);
+    f.wanderTimer = 0.3;
+  } else {
+    f.wanderTimer -= dt;
+    if (f.wanderTimer <= 0) {
+      f.targetYaw = g_fishRng.next() * 2 * PI;
+      f.targetPitch = (g_fishRng.next() - 0.5) * 0.9; // gentle up/down bias, radians
+      f.wanderTimer = 2.5 + g_fishRng.next() * 3.5;
+    }
   }
 
   f.yaw += clampd(wrapAngle(f.targetYaw - f.yaw), -TURN_SPEED * dt, TURN_SPEED * dt);
   f.pitch += clampd(f.targetPitch - f.pitch, -TURN_SPEED * dt, TURN_SPEED * dt);
 
-  double speed = SWIM_SPEED * f.speedMult;
+  f.speedPhaseTimer -= dt;
+  if (f.speedPhaseTimer <= 0) {
+    f.fastPhase = !f.fastPhase;
+    if (f.fastPhase) {
+      f.speedPhaseMult = FAST_PHASE_MIN_MULT + g_fishRng.next() * (FAST_PHASE_MAX_MULT - FAST_PHASE_MIN_MULT);
+      f.speedPhaseTimer = FAST_PHASE_MIN_DURATION + g_fishRng.next() * (FAST_PHASE_MAX_DURATION - FAST_PHASE_MIN_DURATION);
+    } else {
+      f.speedPhaseMult = SLOW_PHASE_MIN_MULT + g_fishRng.next() * (SLOW_PHASE_MAX_MULT - SLOW_PHASE_MIN_MULT);
+      f.speedPhaseTimer = SLOW_PHASE_MIN_DURATION + g_fishRng.next() * (SLOW_PHASE_MAX_DURATION - SLOW_PHASE_MIN_DURATION);
+    }
+  }
+
+  double provokedMult = f.attackLungeTimer > 0 ? LUNGE_SPEED_MULT : (f.provoked ? PROVOKED_SPEED_MULT : 1.0);
+  double speed = SWIM_SPEED * f.speedMult * f.speedPhaseMult * provokedMult;
   double cp = std::cos(f.pitch);
   f.velocity.x = -std::sin(f.yaw) * cp * speed;
   f.velocity.z = -std::cos(f.yaw) * cp * speed;
@@ -240,7 +346,7 @@ void updateFish(Fish& f, World& world, double dt, const Vec3& playerPos) {
 
   // tail-wag — fish never fully stop swimming, unlike land animals idling;
   // faster fish visibly flick their tail faster, not just glide quicker
-  f.animPhase += dt * 7.0 * f.speedMult;
+  f.animPhase += dt * 7.0 * f.speedMult * f.speedPhaseMult;
 
   if (f.species == FISH_PUFFERFISH) {
     double dx = f.position.x - playerPos.x, dy = f.position.y - playerPos.y,
@@ -278,6 +384,9 @@ void drawFishes(const std::vector<Fish>& fishes) {
         drawElongatedFish(colored, f.animPhase, true, pal.bandR, pal.bandG, pal.bandB);
         break;
       }
+      case FISH_SHARK:
+        drawShark(f.animPhase);
+        break;
       default:
         break;
     }
@@ -321,6 +430,22 @@ void maintainFishSpawns(World& world, std::vector<Fish>& fishes, double px, doub
     }
     const FishSpeciesDef& def = FISH_SPECIES[species];
 
+    // Sharks only belong in a real body of open water, not a shallow pond —
+    // on top of the already-tiny spawnWeight, require the water to run just
+    // as deep in a ring around the spawn point, the same "real water" check
+    // above just sampled at a handful of points instead of one.
+    if (species == FISH_SHARK) {
+      const int CHECK_RADIUS = 10;
+      const int dirs[4][2] = { { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 } };
+      bool bigWater = true;
+      for (const auto& d : dirs) {
+        int cBiome = 0, cSurfaceY = 0;
+        columnInfoAt(wx + d[0] * CHECK_RADIUS, wz + d[1] * CHECK_RADIUS, cBiome, cSurfaceY);
+        if (cSurfaceY > SEA_LEVEL - 2) { bigWater = false; break; }
+      }
+      if (!bigWater) continue;
+    }
+
     Fish f;
     f.species = (FishSpecies)species;
     f.position = Vec3(wx + 0.5, wy + 0.5, wz + 0.5);
@@ -328,6 +453,7 @@ void maintainFishSpawns(World& world, std::vector<Fish>& fishes, double px, doub
     f.scale = def.minScale + g_fishRng.next() * (def.maxScale - def.minScale);
     f.speedMult = def.minSpeed + g_fishRng.next() * (def.maxSpeed - def.minSpeed);
     f.animPhase = g_fishRng.next() * 2 * PI;
+    f.health = def.maxHealth;
     if (species == FISH_TROPICAL) {
       f.patternIndex = (int)(g_fishRng.next() * TROPICAL_PATTERN_COUNT);
       f.tallShape = g_fishRng.next() < 0.5;
@@ -344,5 +470,51 @@ void maintainFishSpawns(World& world, std::vector<Fish>& fishes, double px, doub
     } else {
       i++;
     }
+  }
+}
+
+int raycastFish(const std::vector<Fish>& fishes, const Vec3& origin, const Vec3& dir,
+                double reach) {
+  int best = -1;
+  double bestT = reach;
+  for (size_t i = 0; i < fishes.size(); i++) {
+    const Fish& f = fishes[i];
+    if (f.dying) continue; // a corpse mid-lie-down isn't a valid target
+    const FishSpeciesDef& def = FISH_SPECIES[f.species];
+    double hw = def.halfWidth * f.scale, hh = def.halfHeight * f.scale, hl = def.halfLength * f.scale;
+    double lo[3] = { f.position.x - hw, f.position.y - hh, f.position.z - hl };
+    double hi[3] = { f.position.x + hw, f.position.y + hh, f.position.z + hl };
+    double o[3] = { origin.x, origin.y, origin.z };
+    double d[3] = { dir.x, dir.y, dir.z };
+    double t0 = 0, t1 = bestT;
+    bool hit = true;
+    for (int ax = 0; ax < 3 && hit; ax++) {
+      if (std::fabs(d[ax]) < 1e-9) {
+        if (o[ax] < lo[ax] || o[ax] > hi[ax]) hit = false;
+      } else {
+        double ta = (lo[ax] - o[ax]) / d[ax];
+        double tb = (hi[ax] - o[ax]) / d[ax];
+        if (ta > tb) std::swap(ta, tb);
+        t0 = std::max(t0, ta);
+        t1 = std::min(t1, tb);
+        if (t0 > t1) hit = false;
+      }
+    }
+    if (hit && t0 >= 0 && t0 < bestT) {
+      bestT = t0;
+      best = (int)i;
+    }
+  }
+  return best;
+}
+
+int fishItemFor(FishSpecies species) {
+  switch (species) {
+    case FISH_COD: return ITEM_RAW_COD;
+    case FISH_SALMON: return ITEM_RAW_SALMON;
+    case FISH_PUFFERFISH: return ITEM_RAW_PUFFERFISH;
+    case FISH_TROPICAL: return ITEM_RAW_TROPICAL_FISH;
+    case FISH_SHARK: return ITEM_RAW_SHARK;
+    default: return ITEM_RAW_COD;
   }
 }

@@ -385,23 +385,27 @@ void drawFirstPersonArm(double swing, bool leftHand, int heldTool, int winW, int
   // Swinging a TOOL is a smash, not a punch: the arm lifts, drives down
   // through the block and recovers, following the same phase curve the tool
   // does so the two move as one piece. A bare fist keeps the old even
-  // out-and-back jab.
+  // out-and-back jab. A poking weapon (toolPokes — the spear) does neither:
+  // the arm stays at its rest tip and the whole viewmodel slides straight
+  // forward into the scene and back, a jab rather than a chop.
   bool smashing = heldTool >= 0 && !leftHand;
+  bool poking = smashing && toolPokes((uint8_t)heldTool);
   double phase = smashing ? toolSwingPhase(swing) : 0.0;
   // Matches the 80 degrees the third-person arm swings through, so the blow
   // has the same weight from inside the head as it does watching yourself.
   // At 34 the viewmodel barely twitched next to it.
   const double ARM_SMASH_DEG = 76.0;  // how far the arm itself rises and falls
   const double ARM_SMASH_LIFT = 0.11; // and how far the fist travels with it
+  const double FP_POKE_REACH = 0.22;  // how far the spear jabs into the scene
 
   double side = leftHand ? -1.0 : 1.0;
   // MINUS phase: tipping further about X drives the fist up and out, so the
   // windup (phase -1) raises the arm and the strike (phase +1) brings it
   // down. Adding it instead made the blow travel upwards.
-  double armTip = 72.0 + arc * 26.0 - phase * ARM_SMASH_DEG;
+  double armTip = 72.0 + arc * 26.0 - (poking ? 0.0 : phase * ARM_SMASH_DEG);
   glTranslated((0.42 + IDLE_OUT * idle) * side,
-               -0.42 - arc * 0.04 - IDLE_DROP * idle - phase * ARM_SMASH_LIFT,
-               -0.30 - IDLE_BACK * idle);
+               -0.42 - arc * 0.04 - IDLE_DROP * idle - (poking ? 0.0 : phase * ARM_SMASH_LIFT),
+               -0.30 - IDLE_BACK * idle - (poking ? phase * FP_POKE_REACH : 0.0));
   glRotated(-18.0 * side, 0, 0, 1);
   glRotated(armTip, 1, 0, 0);
   glRotated(6.0 * side, 0, 1, 0);
@@ -425,28 +429,29 @@ void drawFirstPersonArm(double swing, bool leftHand, int heldTool, int winW, int
   // Negative leans the head INWARD, toward the middle of the view, rather
   // than out past the edge of the screen — same angle, mirrored.
   const double FP_TOOL_LEAN_DEG = -45.0;
-  // A sword gets its own lean: at -45 it points hard to the right (the lean
-  // plus the arm's own -18° roll compound). 45 with the tip below nets out
-  // to about 10° to the LEFT — measured by projecting the haft axis through
-  // this exact transform chain. Other tools keep the shared lean.
-  const double FP_SWORD_LEAN_DEG = 45.0;
+  // A sprite tool (isSpriteTool: currently the sword, the power axe and the
+  // spear — any item held as its own hand-drawn art rather than procedural
+  // geometry — see tools.h) gets its own lean: at -45 it points hard to the right (the
+  // lean plus the arm's own -18° roll compound). 45 with the tip below nets
+  // out to about 10° to the LEFT — measured by projecting the haft axis
+  // through this exact transform chain. Other tools keep the shared lean.
+  const double FP_SPRITE_LEAN_DEG = 45.0;
   // ...and its own forward TIP, applied in the arm frame BEFORE the lean.
-  // -80° pitches the blade 45° forward into the scene (away from the eye)
+  // -80° pitches the art 45° forward into the scene (away from the eye)
   // instead of straight up. This slot is the one that works: an X-rotation
-  // after the lean only moves the blade toward or past vertical, never
-  // forward — the lean turns that axis sideways, so it has to come first.
-  const double FP_SWORD_TIP_DEG = -80.0;
+  // after the lean only moves it toward or past vertical, never forward —
+  // the lean turns that axis sideways, so it has to come first.
+  const double FP_SPRITE_TIP_DEG = -80.0;
   // Full size, matching the third-person model. This was shrunk to 0.6 while
   // the tool was an extruded slab that filled the frame; against the box
   // model it just made the viewmodel look like it was holding a toy.
   const double FP_TOOL_SCALE = 1.0;
   if (!leftHand && heldTool >= 0) {
-    const ToolVisual* tv = toolVisualFor((uint8_t)heldTool);
-    bool sword = tv && tv->shape == TOOL_SHAPE_SWORD;
-    double lean = sword ? FP_SWORD_LEAN_DEG : FP_TOOL_LEAN_DEG;
+    bool spriteHeld = isSpriteTool((uint8_t)heldTool);
+    double lean = spriteHeld ? FP_SPRITE_LEAN_DEG : FP_TOOL_LEAN_DEG;
     glPushMatrix();
     glTranslated(0, -12, 0);
-    if (sword) glRotated(FP_SWORD_TIP_DEG, 1, 0, 0);
+    if (spriteHeld) glRotated(FP_SPRITE_TIP_DEG, 1, 0, 0);
     glRotated(lean, 0, 0, 1);
     glScaled(FP_TOOL_SCALE, FP_TOOL_SCALE, FP_TOOL_SCALE);
     drawGrippedTool((uint8_t)heldTool, 0.0); // the arm supplies the swing
@@ -524,7 +529,13 @@ void drawPlayerModel(const Player& player, const PlayerAnim& anim) {
   // Collect/build/interact: one arm arcs forward-up and back — the right
   // hand collects, the left hand builds.
   if (anim.swing > 0) {
-    if (anim.heldTool >= 0 && !anim.swingLeft) {
+    if (anim.heldTool >= 0 && !anim.swingLeft && toolPokes((uint8_t)anim.heldTool)) {
+      // A spear jabs straight forward, no overhead chop: the windup leaves
+      // the arm near rest, the thrust drives it out horizontal. The
+      // sin envelope fades the pose in and out so it lands back at rest
+      // exactly when the swing ends (a bare phase+1 would pop from 45°).
+      armR += std::sin(anim.swing * PI) * (toolSwingPhase(anim.swing) + 1.0) * 45.0;
+    } else if (anim.heldTool >= 0 && !anim.swingLeft) {
       // Mining with a tool is a smash: the arm winds back and up, then comes
       // down through the blow. Same phase curve the tool itself uses.
       armR += toolSwingPhase(anim.swing) * 80.0;
@@ -547,6 +558,21 @@ void drawPlayerModel(const Player& player, const PlayerAnim& anim) {
     armR = -18.0 + row;
   }
 
+  // Swimming (touching water, not riding a boat): legs trail together and
+  // arms sweep back, the pose a near-horizontal float actually looks like
+  // rather than the standing walk pose tipped on its side. A slow alternating
+  // kick/stroke (swimPhase, always advancing — see PlayerAnim) keeps the
+  // limbs moving instead of holding a single frozen pose the whole time.
+  bool swimPose = player.swimming && !anim.boating;
+  if (swimPose) {
+    double kick = std::sin(anim.swimPhase) * 18.0;
+    legL = 8.0 + kick;
+    legR = 8.0 - kick;
+    double stroke = std::sin(anim.swimPhase + PI) * 12.0;
+    armL = -12.0 + stroke;
+    armR = -12.0 - stroke;
+  }
+
   glPushMatrix();
   glTranslated(player.position.x, player.position.y, player.position.z);
   glRotated(player.yaw * 180.0 / PI, 0, 1, 0);
@@ -557,7 +583,17 @@ void drawPlayerModel(const Player& player, const PlayerAnim& anim) {
   // together, so nothing but this offset needs to change) so the hips
   // settle onto the seat instead of floating above the gunwale with the
   // boat's walls hanging in mid-air below the character.
-  if (anim.boating) glTranslated(0, -9.33, 0);
+  if (anim.boating) {
+    glTranslated(0, -9.33, 0);
+  } else if (swimPose) {
+    // Same rigid-rotation trick as the boat's seat offset, just tipping the
+    // whole body forward around a waist-height pivot instead of dropping it
+    // — belly toward the water, head leading forward (a NEGATIVE angle here:
+    // positive tipped the chest up instead, a face-up float).
+    glTranslated(0, 12.0, 0);
+    glRotated(-75.0, 1, 0, 0);
+    glTranslated(0, -12.0, 0);
+  }
 
   glEnable(GL_TEXTURE_2D);
   glBindTexture(GL_TEXTURE_2D, g_currentChar == PlayerCharacter::Alex ? g_texAlex : g_texSteve);

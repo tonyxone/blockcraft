@@ -38,43 +38,82 @@ void drawBox(double x0, double y0, double z0, double w, double h, double d, doub
   }
 }
 
-// Traced from the vanilla render this project keeps at
-// Desktop\animal\Oak_Boat_JE4_BE2.png: a shallow open hull — flat bottom,
-// raised planked side walls, both ends tapering to a point (bow and stern
-// alike, unlike a rowboat which is only pointed at one end) — with a plank
-// seat running across the middle. Built along Z (bow toward -Z, matching
-// every other entity's own yaw convention in this game), centered on the
-// point the player stands at while riding.
-// Sized to fill a full 2x1 footprint (player request), scaled up from the
-// original 1.4x0.62 hull rather than just stretched: every inset/thickness
-// below is the old value re-proportioned to the new length/width so the
-// taper and wall/seat thicknesses still read correctly at the bigger size.
-const double HULL_LEN = 2.0, HULL_WID = 1.0, WALL_H = 0.3, FLOOR_H = 0.1;
-const double WOOD_R = 0.55, WOOD_G = 0.38, WOOD_B = 0.22;
-const double SEAT_R = 0.42, SEAT_G = 0.28, SEAT_B = 0.16;
+// Modelled on the classic clinker-built wooden rowboat in the reference
+// photo (Desktop\blockcraft\boat.jpg): light pine tones, BOTH ends upswept
+// (the bow sweeps higher than the stern), hull sides visibly planked —
+// three horizontal strakes in alternating shades — capped by a darker
+// gunwale rail that overhangs the walls slightly inboard, a
+// lengthwise-planked floor, and two bench thwarts. No oars: the rider
+// never holds any, so a loose shaft across the hull reads as clutter
+// (player request). Built along Z (bow toward -Z, matching every other
+// entity's own yaw convention in this game), centered on the point the
+// player stands at while riding. Still fills the full 2x1 footprint
+// (player request).
+const double HULL_LEN = 2.0, HULL_WID = 1.0, FLOOR_H = 0.10;
+const double WOOD_R = 0.70, WOOD_G = 0.55, WOOD_B = 0.36;
+const double STRAKE_S = 0.85; // alternating plank shade
+const double TRIM_R = 0.50, TRIM_G = 0.37, TRIM_B = 0.23;
+const double SEAT_R = 0.76, SEAT_G = 0.60, SEAT_B = 0.40;
+
+// One side wall as three stacked plank strakes, alternating shades.
+void drawStrakeWall(double x0, double z0, double len) {
+  for (int i = 0; i < 3; i++) {
+    double s = (i % 2 == 0) ? 1.0 : STRAKE_S;
+    drawBox(x0, FLOOR_H + i * 0.10, z0, 0.10, 0.10, len,
+            WOOD_R * s, WOOD_G * s, WOOD_B * s);
+  }
+}
 
 void drawHull() {
   double hl = HULL_LEN / 2, hw = HULL_WID / 2;
+  double floorW = HULL_WID - 0.24;
+  double wallZ0 = -hl + 0.44, wallLen = HULL_LEN - 0.78; // between the end steps
 
-  // flat bottom
-  drawBox(-hw, 0, -hl + 0.2, HULL_WID, FLOOR_H, HULL_LEN - 0.4, WOOD_R, WOOD_G, WOOD_B);
-
-  // side walls
-  drawBox(-hw, FLOOR_H, -hl + 0.3, 0.13, WALL_H, HULL_LEN - 0.6, WOOD_R, WOOD_G, WOOD_B);
-  drawBox(hw - 0.13, FLOOR_H, -hl + 0.3, 0.13, WALL_H, HULL_LEN - 0.6, WOOD_R, WOOD_G, WOOD_B);
-
-  // bow and stern: two stacked, narrowing boxes at each end so the hull
-  // reads as tapering to a point rather than being cut off square
-  for (int end = -1; end <= 1; end += 2) {
-    double tipZ = end * hl;
-    drawBox(-hw + 0.05, 0, tipZ - end * 0.32, HULL_WID - 0.10, FLOOR_H + WALL_H * 0.7,
-            end * 0.32, WOOD_R, WOOD_G, WOOD_B);
-    drawBox(-hw * 0.55, 0, tipZ - end * 0.49, HULL_WID * 0.55, FLOOR_H + WALL_H * 0.4,
-            end * 0.17, WOOD_R, WOOD_G, WOOD_B);
+  // planked floor: strips running lengthwise, alternating shades
+  for (int i = 0; i < 3; i++) {
+    double s = (i % 2 == 0) ? 1.0 : STRAKE_S;
+    drawBox(-floorW / 2 + i * floorW / 3, 0, wallZ0, floorW / 3 - 0.02, FLOOR_H,
+            wallLen, (WOOD_R - 0.10) * s, (WOOD_G - 0.10) * s, (WOOD_B - 0.08) * s);
   }
 
-  // plank seat across the middle, like the reference render's floor detail
-  drawBox(-hw + 0.16, FLOOR_H, -0.11, HULL_WID - 0.32, 0.05, 0.22, SEAT_R, SEAT_G, SEAT_B);
+  // planked side walls with a darker gunwale rail on top, overhanging
+  // slightly inboard like the real boat's capped rail
+  for (int side = -1; side <= 1; side += 2) {
+    double x0 = side < 0 ? -hw : hw - 0.10;
+    drawStrakeWall(x0, wallZ0, wallLen);
+    double railX0 = side < 0 ? -hw : hw - 0.13;
+    drawBox(railX0, FLOOR_H + 0.30, wallZ0 - 0.04, 0.13, 0.06, wallLen + 0.08,
+            TRIM_R, TRIM_G, TRIM_B);
+  }
+
+  // bow (-Z): three stacked steps that narrow and RISE toward the tip, so
+  // the front sweeps up out of the water like the photo's high prow
+  drawBox(-hw + 0.02, 0, -hl + 0.10, HULL_WID - 0.04, FLOOR_H + 0.20, 0.34,
+          WOOD_R, WOOD_G, WOOD_B);
+  drawBox(-hw * 0.66, 0, -hl + 0.03, HULL_WID * 0.66, FLOOR_H + 0.36, 0.21,
+          WOOD_R, WOOD_G, WOOD_B);
+  drawBox(-hw * 0.34, 0, -hl, HULL_WID * 0.34, FLOOR_H + 0.52, 0.12,
+          WOOD_R, WOOD_G, WOOD_B);
+  drawBox(-hw * 0.66, FLOOR_H + 0.36, -hl + 0.03, HULL_WID * 0.66, 0.06, 0.21,
+          TRIM_R, TRIM_G, TRIM_B);
+  drawBox(-hw * 0.34, FLOOR_H + 0.52, -hl, HULL_WID * 0.34, 0.06, 0.12,
+          TRIM_R, TRIM_G, TRIM_B);
+
+  // stern (+Z): same upswept treatment, but only two steps — the stern in
+  // the photo rises gently where the bow rises steeply
+  drawBox(-hw + 0.02, 0, hl - 0.36, HULL_WID - 0.04, FLOOR_H + 0.18, 0.26,
+          WOOD_R, WOOD_G, WOOD_B);
+  drawBox(-hw * 0.68, 0, hl - 0.12, HULL_WID * 0.68, FLOOR_H + 0.34, 0.12,
+          WOOD_R, WOOD_G, WOOD_B);
+  drawBox(-hw * 0.68, FLOOR_H + 0.34, hl - 0.12, HULL_WID * 0.68, 0.06, 0.12,
+          TRIM_R, TRIM_G, TRIM_B);
+
+  // two bench thwarts across the hull, up near rail height as in the photo
+  for (int i = 0; i < 2; i++) {
+    double z0 = i == 0 ? -0.42 : 0.26;
+    drawBox(-floorW / 2 - 0.03, FLOOR_H + 0.20, z0, floorW + 0.06, 0.06, 0.24,
+            SEAT_R, SEAT_G, SEAT_B);
+  }
 }
 
 } // namespace

@@ -25,6 +25,22 @@ const BlockDef BLOCKS[BLOCK_TYPE_COUNT] = {
   /* LEAVES+PEAR   */ { "leaves", true, false, true, TILE_LEAVES_PEAR,   TILE_LEAVES_PEAR,   TILE_LEAVES_PEAR },
   /* LEAVES+CHERRY */ { "leaves", true, false, true, TILE_LEAVES_CHERRY, TILE_LEAVES_CHERRY, TILE_LEAVES_CHERRY },
   /* LEAVES+ORANGE */ { "leaves", true, false, true, TILE_LEAVES_ORANGE, TILE_LEAVES_ORANGE, TILE_LEAVES_ORANGE },
+  /* FARMLAND */ { "farmland", true, false, true, TILE_FARMLAND_TOP, TILE_DIRT, TILE_DIRT },
+  // Crop stages: not solid (isPlant, cross-billboard). Stages 0-2 of a kind
+  // share one texture (only their mesher-side billboard height differs —
+  // see mesher.cpp's isPlant branch); stage 3 gets its own fuller look.
+  /* WHEAT_0  */ { "wheat",  false, false, true, TILE_WHEAT_SPROUT, TILE_WHEAT_SPROUT, TILE_WHEAT_SPROUT },
+  /* WHEAT_1  */ { "wheat",  false, false, true, TILE_WHEAT_SPROUT, TILE_WHEAT_SPROUT, TILE_WHEAT_SPROUT },
+  /* WHEAT_2  */ { "wheat",  false, false, true, TILE_WHEAT_SPROUT, TILE_WHEAT_SPROUT, TILE_WHEAT_SPROUT },
+  /* WHEAT_3  */ { "wheat",  false, false, true, TILE_WHEAT_MATURE, TILE_WHEAT_MATURE, TILE_WHEAT_MATURE },
+  /* CARROT_0 */ { "carrots", false, false, true, TILE_CARROT_SPROUT, TILE_CARROT_SPROUT, TILE_CARROT_SPROUT },
+  /* CARROT_1 */ { "carrots", false, false, true, TILE_CARROT_SPROUT, TILE_CARROT_SPROUT, TILE_CARROT_SPROUT },
+  /* CARROT_2 */ { "carrots", false, false, true, TILE_CARROT_SPROUT, TILE_CARROT_SPROUT, TILE_CARROT_SPROUT },
+  /* CARROT_3 */ { "carrots", false, false, true, TILE_CARROT_MATURE, TILE_CARROT_MATURE, TILE_CARROT_MATURE },
+  /* POTATO_0 */ { "potatoes", false, false, true, TILE_POTATO_SPROUT, TILE_POTATO_SPROUT, TILE_POTATO_SPROUT },
+  /* POTATO_1 */ { "potatoes", false, false, true, TILE_POTATO_SPROUT, TILE_POTATO_SPROUT, TILE_POTATO_SPROUT },
+  /* POTATO_2 */ { "potatoes", false, false, true, TILE_POTATO_SPROUT, TILE_POTATO_SPROUT, TILE_POTATO_SPROUT },
+  /* POTATO_3 */ { "potatoes", false, false, true, TILE_POTATO_MATURE, TILE_POTATO_MATURE, TILE_POTATO_MATURE },
 };
 
 const uint8_t FLOWER_BLOCKS[FLOWER_KIND_COUNT] = {
@@ -36,6 +52,11 @@ const uint8_t FLOWER_BLOCKS[FLOWER_KIND_COUNT] = {
 const uint8_t FRUIT_LEAF_BLOCKS[FRUIT_KIND_COUNT] = {
   BLOCK_LEAVES_APPLE, BLOCK_LEAVES_PEACH, BLOCK_LEAVES_PEAR, BLOCK_LEAVES_CHERRY,
   BLOCK_LEAVES_ORANGE,
+};
+
+// Order matches ITEM_WHEAT, ITEM_CARROT, ITEM_POTATO (recipes.h).
+const uint8_t CROP_BASE_BLOCKS[CROP_KIND_COUNT] = {
+  BLOCK_WHEAT_0, BLOCK_CARROT_0, BLOCK_POTATO_0,
 };
 
 // Crafted goods that can be placed in the world. A few (sandstone, packed
@@ -107,7 +128,7 @@ bool isWater(uint8_t id) {
 }
 
 bool isPlant(uint8_t id) {
-  return id == BLOCK_TALL_GRASS || isFlower(id);
+  return id == BLOCK_TALL_GRASS || isFlower(id) || isCrop(id);
 }
 
 bool isFlower(uint8_t id) {
@@ -125,6 +146,40 @@ int fruitItemForLeaves(uint8_t id) {
     case BLOCK_LEAVES_PEAR: return ITEM_PEAR;
     case BLOCK_LEAVES_CHERRY: return ITEM_CHERRY;
     case BLOCK_LEAVES_ORANGE: return ITEM_ORANGE;
+    default: return -1;
+  }
+}
+
+bool isCrop(uint8_t id) { return id >= BLOCK_WHEAT_0 && id <= BLOCK_POTATO_3; }
+
+bool isMatureCrop(uint8_t id) {
+  return id == BLOCK_WHEAT_3 || id == BLOCK_CARROT_3 || id == BLOCK_POTATO_3;
+}
+
+int cropStage(uint8_t id) {
+  if (id >= BLOCK_WHEAT_0 && id <= BLOCK_WHEAT_3) return id - BLOCK_WHEAT_0;
+  if (id >= BLOCK_CARROT_0 && id <= BLOCK_CARROT_3) return id - BLOCK_CARROT_0;
+  if (id >= BLOCK_POTATO_0 && id <= BLOCK_POTATO_3) return id - BLOCK_POTATO_0;
+  return -1;
+}
+
+uint8_t nextCropStage(uint8_t id) {
+  if (!isCrop(id) || isMatureCrop(id)) return id;
+  return id + 1; // stages are laid out contiguously ascending within a kind
+}
+
+int cropItemFor(uint8_t id) {
+  if (id >= BLOCK_WHEAT_0 && id <= BLOCK_WHEAT_3) return ITEM_WHEAT;
+  if (id >= BLOCK_CARROT_0 && id <= BLOCK_CARROT_3) return ITEM_CARROT;
+  if (id >= BLOCK_POTATO_0 && id <= BLOCK_POTATO_3) return ITEM_POTATO;
+  return -1;
+}
+
+int cropBaseBlockForItem(uint8_t item) {
+  switch (item) {
+    case ITEM_WHEAT: return BLOCK_WHEAT_0;
+    case ITEM_CARROT: return BLOCK_CARROT_0;
+    case ITEM_POTATO: return BLOCK_POTATO_0;
     default: return -1;
   }
 }

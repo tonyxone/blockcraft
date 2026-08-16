@@ -35,6 +35,13 @@ const ToolVisual TOOL_VISUALS[] = {
   // blade geometry as ITEM_STONE_SWORD in hand — the art only replaces the
   // 2D icon, per art\README.md.
   { ITEM_SWORD, BLOCK_STONE, BLOCK_WOOD, TOOL_SHAPE_SWORD },
+  // Same deal as ITEM_SWORD above: its own hand-drawn slot icon
+  // (art\power_axe.png), the ordinary stone-tier axe geometry in hand.
+  { ITEM_POWER_AXE, BLOCK_STONE, BLOCK_WOOD, TOOL_SHAPE_AXE },
+  // And again: hand-drawn slot icon (art\spear.png). The shape only matters
+  // if the art ever goes missing — a shovel head is the closest fallback
+  // silhouette (a point on a stick).
+  { ITEM_SPEAR, BLOCK_STONE, BLOCK_WOOD, TOOL_SHAPE_SHOVEL },
 };
 const int TOOL_VISUAL_COUNT = (int)(sizeof(TOOL_VISUALS) / sizeof(TOOL_VISUALS[0]));
 
@@ -160,12 +167,17 @@ const double REST_TILT_DEG = 45.0;
 // -35) turned the head across the body and read as carrying the thing at an
 // angle to yourself.
 const double GRIP_ROLL_DEG = 0.0;
-// Extra haft-spin for the sword only — see drawGrippedTool.
-const double SWORD_GRIP_YAW_DEG = -30.0;
+// Extra haft-spin for hand-drawn sprite tools (isSpriteTool) — see
+// drawGrippedTool.
+const double SPRITE_TOOL_GRIP_YAW_DEG = -30.0;
 // The strike drives the head down and forward past horizontal; the windup
 // before it is smaller, just enough to read as "raise, then smash".
 const double SWING_STRIKE_DEG = 80.0;
 const double SWING_LIFT_DEG = 35.0;
+// How far a poking weapon (toolPokes — the spear) slides along its own
+// shaft at full thrust, in the player model's px units (the held sprite is
+// ~15 tall, so this extends the tip by about a third of its length).
+const double POKE_THRUST_LEN = 4.5;
 
 // Fractions of the swing spent winding up and driving down. The strike is
 // quicker than the recovery, which is what makes it read as a blow landing
@@ -275,6 +287,10 @@ const ToolVisual* toolVisualFor(uint8_t id) {
 
 bool isToolItem(uint8_t id) { return toolVisualFor(id) != nullptr; }
 
+bool isSpriteTool(uint8_t id) {
+  return generatedSpriteNamed(spriteNameForTile(craftItemTile(id))) != nullptr;
+}
+
 double attackPower(uint8_t selectedItemId) {
   switch (selectedItemId) {
     case ITEM_WOOD_PICKAXE:
@@ -293,11 +309,56 @@ double attackPower(uint8_t selectedItemId) {
       return 2.0;
     case ITEM_SWORD:
       return 3.0;
+    case ITEM_POWER_AXE: // 3 stone axes forged into one — by request
+      return 3.0;
+    case ITEM_SPEAR: // modest damage — the long reach is its real weapon
+      return 2.0;
     case ITEM_STICK: // equippable, but deliberately below the bare-hand floor
       return 0.5;
     default:
       return 0.1; // bare hand — the floor across every tier
   }
+}
+
+double toolWeight(uint8_t item) {
+  switch (item) {
+    // Light, thin-headed tools: not much more than the haft itself.
+    case ITEM_WOOD_HOE: return 0.75;
+    case ITEM_STONE_HOE: return 1.00;
+    case ITEM_WOOD_SHOVEL: return 0.85;
+    case ITEM_STONE_SHOVEL: return 1.15;
+    // A sword is long but thin and one-handed — lighter than a wedge-headed
+    // axe or a thick two-pronged pickaxe of the same tier.
+    case ITEM_WOOD_SWORD: return 0.90;
+    case ITEM_STONE_SWORD: return 1.20;
+    // Forged from 3 stone swords' worth of material (see CRAFT_RECIPES) —
+    // heavier than the standard stone sword it's built from.
+    case ITEM_SWORD: return 1.40;
+    // A dense wedge head, real axes' own reputation for being front-heavy.
+    case ITEM_WOOD_AXE: return 1.10;
+    case ITEM_STONE_AXE: return 1.50;
+    // Forged from 3 stone axes — heavier than the standard stone axe.
+    case ITEM_POWER_AXE: return 2.00;
+    // A long shaft with a small stone tip — about the wood sword's heft,
+    // quick to jab with.
+    case ITEM_SPEAR: return 0.90;
+    // The heaviest ordinary tool: a thick head split into two full prongs
+    // plus a crossbar, more metal than any single-bladed shape here.
+    case ITEM_WOOD_PICKAXE: return 1.25;
+    case ITEM_STONE_PICKAXE: return 1.70;
+    // Equippable, but barely more than swinging nothing at all.
+    case ITEM_STICK: return 0.45;
+    default: return 0.55; // bare hand — light and quick, heavier than a stick's whip but still fast
+  }
+}
+
+bool toolPokes(uint8_t item) { return item == ITEM_SPEAR; }
+
+double attackReach(uint8_t item) {
+  // The spear's whole point: half the swing damage of the named weapons but
+  // twice their reach — you jab things from well outside their own range.
+  if (item == ITEM_SPEAR) return 4.0;
+  return 2.0; // every other weapon matches MINE_REACH in main.cpp
 }
 
 double toolSwingPhase(double swingT) {
@@ -324,18 +385,27 @@ void drawGrippedTool(uint8_t item, double swingT) {
   // backwards and then drives well past rest, so the tool comes down on the
   // block instead of merely waving toward it.
   double phase = toolSwingPhase(swingT);
-  double swingDeg = phase * (phase >= 0 ? SWING_STRIKE_DEG : SWING_LIFT_DEG);
+  bool poking = toolPokes(item);
+  double swingDeg = poking ? 0.0 : phase * (phase >= 0 ? SWING_STRIKE_DEG : SWING_LIFT_DEG);
   double tilt = -(REST_TILT_DEG + swingDeg);
 
   glPushMatrix();
-  // A sword's blade is a flat slab; held square like every other tool it
-  // presents nearly edge-on in first person — only the thin side shows.
-  // Spinning it a little around the haft turns the flat of the blade toward
-  // the eye, so the sword actually reads as a sword. Verified against the
-  // FP transform chain: -30 degrees visibly widens the blade on screen,
-  // +30 narrows it (fully edge-on).
-  glRotated(GRIP_ROLL_DEG + (v->shape == TOOL_SHAPE_SWORD ? SWORD_GRIP_YAW_DEG : 0), 0, 1, 0);
+  // A sprite tool's art is a flat slab (spriteToolVoxelList extrudes it only
+  // CELL*1.5 deep); held square like the procedural tools it presents nearly
+  // edge-on in first person — only the thin side shows. Spinning it a little
+  // around the haft turns the flat of the art toward the eye, so it actually
+  // reads as what it's drawn as. Verified against the FP transform chain:
+  // -30 degrees visibly widens it on screen, +30 narrows it (fully edge-on).
+  // Keyed on isSpriteTool (any hand-drawn item), not ToolShape — a
+  // shape-only check missed every non-sword item that later got its own
+  // art (the power axe first shipped still held edge-on because of this).
+  glRotated(GRIP_ROLL_DEG + (sprite && sprite->rgba ? SPRITE_TOOL_GRIP_YAW_DEG : 0), 0, 1, 0);
   glRotated(tilt, 1, 0, 0);
+  // A poking weapon doesn't chop — it jabs: the same phase that lifts and
+  // drops a blade instead slides the shaft back along its own axis for the
+  // windup and drives it straight forward through rest for the thrust.
+  // (Applied after the tilt, so local +Y IS the shaft axis.)
+  if (poking) glTranslated(0, phase * POKE_THRUST_LEN, 0);
 
   if (sprite && sprite->rgba) {
     // Hand-drawn art: held as the actual drawing (see spriteToolVoxelList
